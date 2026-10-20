@@ -1676,6 +1676,7 @@ setTimeout(hide,6000);setTimeout(leave,12000);
   <div class="grp" id="gSel">
     <button id="mSel" class="ib" data-tip="Select (click a text box or image to edit)" aria-label="Select"><svg class="ic"><use href="#i-sel"/></svg></button>
     <button id="mLs" class="ib" data-tip="Lasso (select, move, delete)" aria-label="Lasso"><svg class="ic"><use href="#i-lasso"/></svg></button>
+    <button id="mLive" class="ib" data-tip="Live text: handwriting turns into typed text" aria-label="Live text"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19L9 5l5 14M6 14h6"/><path d="M17 9h4M19 9v10"/></svg></button>
     <button id="mLaser" class="ib" data-tip="Laser pointer (fades away)" aria-label="Laser pointer"><svg class="ic"><use href="#i-laser"/></svg></button>
     <span class="grp">
       <button id="mShp" class="ib" data-tip="Shapes" aria-label="Shapes"><svg class="ic"><use href="#i-shapes"/></svg></button>
@@ -4229,6 +4230,15 @@ $('undo').onclick=()=>{
     for(const b of (h.boxes||[])){ if(b.endCrop) b.endCrop(false); b.kind==='image'?removeImageBox(b):removeBox(b); }
     for(const {layer,sd} of h.items){ const i=layer.strokes.indexOf(sd); if(i>=0) layer.strokes.splice(i,1); }
     for(const {layer,sd} of h.items) inkRemove(layer,sd);
+  }else if(h.t==='live'){
+    h.sers=boxSer(h.box); removeBox(h.box); h.box=null;
+    const byLayer=new Map();
+    for(const it of h.items){ if(!byLayer.has(it.layer)) byLayer.set(it.layer,[]); byLayer.get(it.layer).push(it); }
+    for(const [layer,items] of byLayer){
+      items.sort((a,b)=>a.index-b.index);
+      for(const it of items) layer.strokes.splice(it.index,0,it.sd);
+      for(const it of items) inkAdd(layer,it.sd);
+    }
   }else if(h.t==='recolor'){
     for(const it of h.items){ it.nw=it.sd.color; it.sd.color=it.old; }
     inkReplaceItems(h.items);
@@ -4277,6 +4287,15 @@ $('redo').onclick=()=>{
     for(const {layer,sd} of h.items) layer.strokes.push(sd);
     h.boxes=(h.sers||[]).map(o=>boxMake(pg,o));
     for(const {layer,sd} of h.items) inkAdd(layer,sd);
+  }else if(h.t==='live'){
+    const byLayer=new Map();
+    for(const it of h.items){ if(!byLayer.has(it.layer)) byLayer.set(it.layer,[]); byLayer.get(it.layer).push(it); }
+    for(const [layer,items] of byLayer){
+      items.sort((a,b)=>b.index-a.index);
+      for(const it of items){ const i=layer.strokes.indexOf(it.sd); if(i>=0) layer.strokes.splice(i,1); }
+      for(const it of items) inkRemove(layer,it.sd);
+    }
+    h.box=boxMake(pg,h.sers);
   }else if(h.t==='recolor'){
     for(const it of h.items) it.sd.color=it.nw;
     inkReplaceItems(h.items);
@@ -4593,6 +4612,7 @@ function onUp(e){
   gp.history.push({t:'add',layer,sd:cur,extra:headSd});
   const _sd=cur; cur=null;
   clearLive(); if(headSd) repaintLayer(layer); else inkAdd(layer,_sd); __inkPerf.add(performance.now()-_t0);
+  if(liveOn&&(mode==='pen'||mode==='ink'||mode==='cal')&&!_sd.alpha) ltAdd(gp,layer,_sd);
 }
 wrap.addEventListener('click',e=>{
   if(!pageOf(e.target)) return;
@@ -4679,6 +4699,46 @@ function lsSelectSingle(box){
   lsSel={pg:box.page,items:[],boxes:[box],box:lsBounds([],[box]),kind:'single'};
   lsShowBox();
 }
+
+/* LIVE TEXT — after a short pause in writing, the new ink is recognised (ML Kit, native) and replaced by a text box */
+let liveOn=false, ltPend=null, ltTimer=0, ltId=0; const ltWait=new Map();
+$('mLive').onclick=()=>{ liveOn=!liveOn; $('mLive').classList.toggle('on',liveOn); if(!liveOn){ clearTimeout(ltTimer); ltPend=null; } $('st').textContent=liveOn?'Live text ON — write with the pen, pause, and the ink becomes typed text':'Live text OFF'; };
+function ltAdd(pg,layer,sd){
+  if(ltPend&&ltPend.pg!==pg) ltFlush();
+  if(!ltPend) ltPend={pg,items:[]};
+  ltPend.items.push({layer,sd});
+  clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,800);
+}
+function ltFlush(){
+  if(!ltPend) return;
+  if(cur){ clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,300); return; } // still writing
+  const job=ltPend; ltPend=null;
+  if(!window.Android||!Android.recognizeLive){ $('st').textContent='Live text works only in the Android app'; return; }
+  const items=job.items.filter(it=>it.layer.strokes.includes(it.sd));
+  if(!items.length) return;
+  items.sort((a,b)=>a.sd.pts[0].x-b.sd.pts[0].x);
+  let t=0; const strokes=items.map(({sd})=>sd.pts.map(p=>({x:p.x,y:p.y,t:(t+=10)}))); t+=300;
+  const id=++ltId; ltWait.set(id,{pg:job.pg,items});
+  Android.recognizeLive(id,JSON.stringify(strokes));
+}
+window.__liveResult=function(id,text,ok){
+  const job=ltWait.get(id); ltWait.delete(id); if(!job) return;
+  if(!ok){ $('st').textContent=text; return; }
+  text=(text||'').trim(); if(!text) return;
+  const pg=job.pg, items=job.items.filter(it=>it.layer.strokes.includes(it.sd)); // skip strokes undone / erased meanwhile
+  if(!items.length) return;
+  const bb=lsBounds(items,[]), ih=bb.y1-bb.y0;
+  const fs=Math.max(10,Math.min(48,Math.round(ih*0.7))), pad=6;
+  const o={kind:'text',x:bb.x0-pad,y:bb.y0-pad,w:Math.max(60,(bb.x1-bb.x0)+pad*2+fs),h:Math.max(fs*2,ih+pad*2),rot:0,md:text,fs,ff:'sans',tc:null,eng:'v1'};
+  const removed=[], keep=new Set(items.map(i=>i.sd));
+  for(const layer of new Set(items.map(i=>i.layer))){
+    for(let i=layer.strokes.length-1;i>=0;i--){ const sd=layer.strokes[i]; if(keep.has(sd)){ layer.strokes.splice(i,1); removed.push({layer,sd,index:i}); } }
+  }
+  const box=boxMake(pg,o);
+  pg.history.push({t:'live',items:removed,box});
+  for(const r of removed) inkRemove(r.layer,r.sd);
+  asMark(pg,true);
+};
 /* UNIFIED SELECTION TOOLBAR — one bar for everything: Lasso / Select selections (ink, text, images, mixed) AND a single
    text box / image (Text tool, Image tool, Select tool). The bar adapts to what is selected:
    text box  -> Move · Edit (Render while editing) · Aa · | Rotate · Copy · Cut · Delete
