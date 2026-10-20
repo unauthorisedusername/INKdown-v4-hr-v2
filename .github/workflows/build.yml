@@ -1,0 +1,47 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Assemble Android project
+        run: |
+          set -e
+          P=build_project
+          mkdir -p $P/app/src/main/java/com/inkrecog/app
+          mkdir -p $P/app/src/main/assets
+          mkdir -p $P/app/src/main/res/values
+          mkdir -p $P/app/src/main/res/drawable
+          cp MainActivity.java $P/app/src/main/java/com/inkrecog/app/
+          cp index.html $P/app/src/main/assets/
+          cp AndroidManifest.xml $P/app/src/main/
+          cp strings.xml styles.xml $P/app/src/main/res/values/
+          cp ic_launcher.xml $P/app/src/main/res/drawable/
+          cp app-build.gradle $P/app/build.gradle
+          cp root-build.gradle $P/build.gradle
+          cp settings.gradle gradle.properties $P/
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build debug APK
+        working-directory: build_project
+        run: gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: INKdown-Recognize-APK
+          path: build_project/app/build/outputs/apk/debug/*.apk
