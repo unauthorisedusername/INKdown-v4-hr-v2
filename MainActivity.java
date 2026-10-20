@@ -130,7 +130,13 @@ public class MainActivity extends Activity {
         });
     }
 
+    private interface Cb { void done(String text, boolean ok); }
+
     private void recognizeInk(final String json) {
+        recognize(json, (t, ok) -> sendResult(t));
+    }
+
+    private void recognize(final String json, final Cb cb) {
         try {
             Ink.Builder ib = Ink.builder();
             JSONArray strokes = new JSONArray(json);
@@ -154,15 +160,21 @@ public class MainActivity extends Activity {
             RemoteModelManager mm = RemoteModelManager.getInstance();
             mm.download(inkModel, new DownloadConditions.Builder().build())
                 .addOnSuccessListener(v -> rec.recognize(ink)
-                    .addOnSuccessListener(r -> sendResult(r.getCandidates().isEmpty() ? "(nothing recognised)" : r.getCandidates().get(0).getText()))
-                    .addOnFailureListener(e -> sendResult("Recognition failed: " + e.getMessage())))
-                .addOnFailureListener(e -> sendResult("Model download failed (needs internet once): " + e.getMessage()));
+                    .addOnSuccessListener(r -> cb.done(r.getCandidates().isEmpty() ? "" : r.getCandidates().get(0).getText(), true))
+                    .addOnFailureListener(e -> cb.done("Recognition failed: " + e.getMessage(), false)))
+                .addOnFailureListener(e -> cb.done("Model download failed (needs internet once): " + e.getMessage(), false));
         } catch (Exception e) {
-            sendResult("Recognition error: " + e.getMessage());
+            cb.done("Recognition error: " + e.getMessage(), false);
         }
     }
 
     private class Bridge {
+        @JavascriptInterface
+        public void recognizeLive(final int id, final String json) {
+            runOnUiThread(() -> recognize(json, (t, ok) -> runOnUiThread(() ->
+                webView.evaluateJavascript("window.__liveResult&&window.__liveResult(" + id + "," + JSONObject.quote(t) + "," + ok + ")", null))));
+        }
+
         @JavascriptInterface
         public void recognizeInk(final String json) {
             runOnUiThread(() -> MainActivity.this.recognizeInk(json));
