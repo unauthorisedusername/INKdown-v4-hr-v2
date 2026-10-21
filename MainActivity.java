@@ -242,7 +242,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void ensureInkObjects() {
+    private void ensureInkObjects() throws Exception {
         if (recognizer == null) {
             DigitalInkRecognitionModelIdentifier id = DigitalInkRecognitionModelIdentifier.fromLanguageTag("en-US");
             inkModel = DigitalInkRecognitionModel.builder(id).build();
