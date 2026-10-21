@@ -1702,7 +1702,6 @@ body .sel-bar #v2tb,body.tbLight .sel-bar #v2tb{position:static;display:flex;fle
   <div class="grp" id="gSel">
     <button id="mSel" class="ib" data-tip="Select (click a text box or image to edit)" aria-label="Select"><svg class="ic"><use href="#i-sel"/></svg></button>
     <button id="mLs" class="ib" data-tip="Lasso (select, move, delete)" aria-label="Lasso"><svg class="ic"><use href="#i-lasso"/></svg></button>
-    <button id="mLive" class="ib" data-tip="Live text: handwriting turns into typed text" aria-label="Live text"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19L9 5l5 14M6 14h6"/><path d="M17 9h4M19 9v10"/></svg></button>
     <button id="mLaser" class="ib" data-tip="Laser pointer (fades away)" aria-label="Laser pointer"><svg class="ic"><use href="#i-laser"/></svg></button>
     <span class="grp">
       <button id="mShp" class="ib" data-tip="Shapes" aria-label="Shapes"><svg class="ic"><use href="#i-shapes"/></svg></button>
@@ -4267,15 +4266,6 @@ $('undo').onclick=()=>{
     for(const b of (h.boxes||[])){ if(b.endCrop) b.endCrop(false); b.kind==='image'?removeImageBox(b):removeBox(b); }
     for(const {layer,sd} of h.items){ const i=layer.strokes.indexOf(sd); if(i>=0) layer.strokes.splice(i,1); }
     for(const {layer,sd} of h.items) inkRemove(layer,sd);
-  }else if(h.t==='live'){
-    if(h.box&&h.box.page&&h.box.page.boxes.includes(h.box)){ h.box._ltLast=h.prevLast||null; ltApply(h.box,h.oldDoc); }
-    const byLayer=new Map();
-    for(const it of h.items){ if(!byLayer.has(it.layer)) byLayer.set(it.layer,[]); byLayer.get(it.layer).push(it); }
-    for(const [layer,items] of byLayer){
-      items.sort((a,b)=>a.index-b.index);
-      for(const it of items) layer.strokes.splice(it.index,0,it.sd);
-      for(const it of items) inkAdd(layer,it.sd);
-    }
   }else if(h.t==='recolor'){
     for(const it of h.items){ it.nw=it.sd.color; it.sd.color=it.old; }
     inkReplaceItems(h.items);
@@ -4324,15 +4314,6 @@ $('redo').onclick=()=>{
     for(const {layer,sd} of h.items) layer.strokes.push(sd);
     h.boxes=(h.sers||[]).map(o=>boxMake(pg,o));
     for(const {layer,sd} of h.items) inkAdd(layer,sd);
-  }else if(h.t==='live'){
-    const byLayer=new Map();
-    for(const it of h.items){ if(!byLayer.has(it.layer)) byLayer.set(it.layer,[]); byLayer.get(it.layer).push(it); }
-    for(const [layer,items] of byLayer){
-      items.sort((a,b)=>b.index-a.index);
-      for(const it of items){ const i=layer.strokes.indexOf(it.sd); if(i>=0) layer.strokes.splice(i,1); }
-      for(const it of items) inkRemove(layer,it.sd);
-    }
-    if(h.box&&h.box.page&&h.box.page.boxes.includes(h.box)) ltApply(h.box,h.newDoc);
   }else if(h.t==='recolor'){
     for(const it of h.items) it.sd.color=it.nw;
     inkReplaceItems(h.items);
@@ -4522,14 +4503,6 @@ function onDown(e){
   if(e.target && e.target.closest && e.target.closest('.tbox')) return;
   // Fingers only navigate (scroll / pinch, see TOUCH NAVIGATION); pen and mouse do the actual work.
   if(e.pointerType==='touch') return;
-  if(liveOn&&(mode==='pen'||mode==='ink'||mode==='cal')){
-    if(liveArmed){ // first gesture: draw the text box
-      if(activeId!==null) return;
-      e.preventDefault(); deselectAll(); beginGesture(e,pg);
-      const q=pos(e); txDraft={x0:q.x,y0:q.y,x1:q.x,y1:q.y}; ltDrafting=true; showDragRect(); return;
-    }
-    clearTimeout(ltTimer); ltT0=performance.now(); ltNewWordCheck(pg,pagePos(e,pg)); if(ltPend) ltTimer=setTimeout(ltFlush,2500); // a new stroke starts: a new word converts the previous one at once; otherwise hold, remember when it began
-  }
   if(mode==='text'&&(textSubMode==='add'||textSubMode==='addv2')){
     if(activeId!==null) return;
     e.preventDefault();
@@ -4617,11 +4590,9 @@ function onUp(e){
   if(e.pointerId!==activeId) return;
   activeId=null;
   holdClear();
-  if(liveOn&&ltPend){ clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,LT_DELAY); }
   if(txDraft){
     const d=txDraft, x0=Math.min(d.x0,d.x1),x1=Math.max(d.x0,d.x1),y0=Math.min(d.y0,d.y1),y1=Math.max(d.y0,d.y1);
     hideDragRect(); txDraft=null;
-    if(ltDrafting){ ltDrafting=false; ltMakeTarget(gp,x0,y0,x1-x0,y1-y0); return; }
     if(x1-x0>10&&y1-y0>10){
       if(textSubMode==='addv2'){ const P=gp; TE.load().then(()=>{ const nb=createTextBox(P,x0,y0,x1-x0,y1-y0,true,'v2'); editBox(nb); }).catch(err=>{ console.error(err); alert('Could not load the TipTap engine (needs internet on first use).'); }); }
       else createTextBox(gp,x0,y0,x1-x0,y1-y0);
@@ -4668,7 +4639,6 @@ function onUp(e){
   gp.history.push({t:'add',layer,sd:cur,extra:headSd});
   const _sd=cur; cur=null;
   clearLive(); if(headSd) repaintLayer(layer); else inkAdd(layer,_sd); __inkPerf.add(performance.now()-_t0);
-  if(liveOn&&(mode==='pen'||mode==='ink'||mode==='cal')&&!_sd.alpha) ltAdd(gp,layer,_sd,ltT0,performance.now());
 }
 wrap.addEventListener('click',e=>{
   if(!pageOf(e.target)) return;
@@ -4756,12 +4726,14 @@ function lsSelectSingle(box){
   lsShowBox();
 }
 
-/* LIVE TEXT — draw a text box once (blinking caret), then write anywhere: after a pause the ink is split into lines,
-   recognised line by line (ML Kit, native, with real pen timing + the text already in the box as context),
-   appended at the caret and the ink removed. */
-let ltPenIn=false, liveOn=false, liveArmed=false, ltDrafting=false, ltTarget=null, ltPend=null, ltTimer=0, ltId=0, ltMsgT=0, ltT0=0;
-const ltWait=new Map(), STROKE_T=new WeakMap(), LT_DELAY=600, ltQueue=[]; let ltBusy=null;
-(function(){ const st=document.createElement('style'); st.textContent='.ltCaret{display:inline-block;width:2px;height:1.1em;margin-left:1px;vertical-align:text-bottom;background:#2563eb;animation:ltBlink 1s steps(1) infinite}@keyframes ltBlink{50%{opacity:0}}.tbox.ltTarget{outline:2px dashed #2563eb;outline-offset:2px}'; document.head.appendChild(st); })();
+/* HANDWRITING PANE — the one way to write with the stylus inside a TipTap box.
+   A floating pane (about 40% of the screen, drag its handle to resize) takes the place of the keyboard. Write a word in it with the
+   stylus, pause, and the ink fades while the typed word appears at the caret of the box being edited (formatted or raw, Render stays
+   manual). The pane keeps its own strokes (never the page ink), its own Space / Backspace / Enter / keyboard keys and a status strip.
+   Recognition is the same native call as before: Android.recognizeLive, one line per word, words split by PAUSES only (position is
+   ignored), with the text before the caret as context. Stylus only for now. */
+const STROKE_T=new WeakMap(); // stroke -> real pen timing (t0,t1), read by inkPayload
+let ltMsgT=0;
 function ltMsg(msg,sticky){
   let d=document.getElementById('ltMsg');
   if(!d){ d=document.createElement('div'); d.id='ltMsg'; d.style.cssText='position:fixed;left:50%;bottom:22px;transform:translateX(-50%);max-width:90vw;padding:10px 16px;border-radius:10px;background:#111827;color:#fff;font:14px/1.3 sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.4);pointer-events:none;text-align:center'; document.body.appendChild(d); }
@@ -4771,69 +4743,6 @@ function ltMsg(msg,sticky){
 }
 window.__inkStatus=ltMsg;
 window.__inkResult=function(txt){ ltMsg('Recognized: '+(txt||'(nothing)').replace(/\n/g,' / ')); };
-function ltTargetOk(){ return ltTarget&&ltTarget.page&&ltTarget.page.boxes.includes(ltTarget); }
-function ltCaret(box){ // blinking caret at the end of the text
-  if(!box||!box.rd) return;
-  box.rd.querySelectorAll('.ph,.ltCaret').forEach(n=>{ if(n.classList.contains('ltCaret')) n.remove(); else n.remove(); });
-  const host=box.rd.lastElementChild&&box.rd.lastElementChild.nodeType===1&&!/^(TABLE|UL|OL|PRE)$/.test(box.rd.lastElementChild.tagName)?box.rd.lastElementChild:box.rd;
-  const c=document.createElement('span'); c.className='ltCaret'; host.appendChild(c);
-}
-function ltRelease(){
-  if(ltTarget&&ltTarget.el){ ltTarget.el.style.pointerEvents=''; ltTarget.el.classList.remove('ltTarget'); ltTarget.rd&&ltTarget.rd.querySelectorAll('.ltCaret').forEach(n=>n.remove()); }
-  ltTarget=null;
-}
-function penCandidate(){ // the TipTap box being edited / selected
-  if(lsSel&&lsSel.kind==='single'){ const b=lsSel.boxes[0]; if(b&&b.kind==='text'&&b.engine==='v2') return b; }
-  for(const pg of pages) for(const b of pg.boxes) if(b.engine==='v2'&&b.el.classList.contains('editing')) return b;
-  return null;
-}
-$('mLive').onclick=()=>{
-  if(ltPenIn){ penOff(); return; }
-  if(!liveOn){ const pb=penCandidate(); if(pb){ penOn(pb); return; } }
-  if(liveOn){
-    const done=ltTargetOk()?ltTarget:null;
-    liveOn=false; liveArmed=false; ltDrafting=false; ltRelease(); clearTimeout(ltTimer); ltPend=null; $('mLive').classList.remove('on');
-    if(done){ lsSelectSingle(done); ltMsg('Live text OFF — tap Render in the box toolbar to format the markdown'); } else ltMsg('Live text OFF');
-    return;
-  }
-  liveOn=true; liveArmed=true; ltRelease(); $('mLive').classList.add('on');
-  if(mode!=='pen'&&mode!=='ink'&&mode!=='cal') setMode(penVar);
-  ltMsg('Live text ON — drag a rectangle on the page to draw the text box',true);
-};
-function ltMakeTarget(pg,x,y,w,h){
-  if(w<40||h<30){ w=Math.min(300,pg.w-x-4); h=90; } // a plain tap gives a default-size box
-  liveArmed=false; ltMsg('Loading the text engine…',true);
-  TE.load().then(()=>{
-    if(!liveOn) return;
-    const box=createTextBox(pg,x,y,w,h,true,'v2'); // handwriting is collected as raw lines, then auto-rendered when live text is switched off
-    box.mode='raw'; box.fontSize=10; applyBoxFont(box);
-    pg.history.push({t:'paste',items:[],boxes:[box]});
-    ltTarget=box; box.el.style.pointerEvents='none'; box.el.classList.add('ltTarget'); box._ltLast=null;
-    ENGINES.v2.render(box); ltCaret(box);
-    ltMsg('Text box ready — write anywhere, pause, and the ink becomes raw text at the caret');
-  }).catch(()=>{ liveArmed=true; ltMsg('The text engine needs internet on first use — check connection, then drag the box again'); });
-}
-function ltLines(box){ return TE.isEmpty(box.doc)?[]:(box.doc.content||[]).map(p=>(p.content||[]).map(n=>n.text||'').join('')); }
-function ltApply(box,doc){ // show a (raw) document in the box and make room for it
-  box.doc=doc; ENGINES.v2.render(box);
-  const pg=box.page, fs=box.fontSize||20, w=box.wPct/100*pg.w, cpl=Math.max(4,Math.floor(w/(fs*0.55)));
-  const n=ltLines(box).reduce((a,l)=>a+Math.max(1,Math.ceil(l.length/cpl)),0);
-  const need=Math.max(70,(n+0.5)*fs*1.7+16);
-  if(need>box.hPct/100*pg.h){ box.hPct=need/pg.h*100; applyBoxRect(box); }
-  if(box===ltTarget) ltCaret(box);
-  asMark(pg,true);
-}
-function ltRenderRaw(box){ // Render button on a raw box that is not being edited: raw markdown -> formatted text, then rich editing
-  if(!TE.ready){ ltMsg('Text engine is still loading — try again in a moment'); return; }
-  TE.rawToRendered(box); ENGINES.v2.render(box); ENGINES.v2.startEdit(box);
-}
-function ltAdd(pg,layer,sd,t0,t1){
-  STROKE_T.set(sd,{t0,t1});
-  if(ltPend&&ltPend.pg!==pg) ltFlush();
-  if(!ltPend) ltPend={pg,items:[]};
-  ltPend.items.push({layer,sd});
-  clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,LT_DELAY);
-}
 /* Build the ML Kit payload: real timestamps, ink split into lines, writing area per line, text before the caret as context */
 function inkPayload(items,pre,one){ // one=true: every stroke is ONE line (text-pen input: position is ignored)
   const info=items.map(({sd})=>{
@@ -4864,73 +4773,21 @@ function inkPayload(items,pre,one){ // one=true: every stroke is ONE line (text-
   });
   return {payload:{pre:(pre||'').slice(-20),lines:out},lines:out};
 }
-function ltFlush(){ // the pending strokes are one finished word (or phrase): queue it for recognition
-  if(!ltPend) return;
-  if(cur){ clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,250); return; } // still writing
-  const job=ltPend; ltPend=null;
-  ltQueue.push(job); ltPump();
+function ltRenderRaw(box){ // Render button on a raw box that is not being edited: raw markdown -> formatted text, then rich editing
+  if(!TE.ready){ ltMsg('Text engine is still loading — try again in a moment'); return; }
+  TE.rawToRendered(box); ENGINES.v2.render(box); ENGINES.v2.startEdit(box);
 }
-function ltPump(){ // one recognition at a time, in order, so each word gets the previous words as context
-  if(ltBusy||!ltQueue.length) return;
-  const job=ltQueue.shift();
-  if(ltPenIn&&!(ltTarget&&ltTarget.editor&&ltTargetOk())){ penForceOff(); return; } // the box was closed: leave pen input quietly
-  if(!ltTargetOk()){ ltMsg('Tap Live text off and on again, then draw a text box'); ltQueue.length=0; return; }
-  if(job.pg!==ltTarget.page){ ltMsg('Write on the same page as the text box'); return ltPump(); }
-  if(!window.Android||!Android.recognizeLive){ ltMsg('Live text works only in the Android app'); ltQueue.length=0; return; }
-  const items=job.items.filter(it=>it.layer.strokes.includes(it.sd));
-  if(!items.length) return ltPump();
-  const P=inkPayload(items,ltPenIn?penCtx(ltTarget):ltLines(ltTarget).join('\n'),ltPenIn);
-  const id=++ltId; ltBusy=id; ltWait.set(id,{pg:job.pg,items,box:ltTarget,lines:P.lines});
-  setTimeout(()=>{ if(ltBusy===id){ ltBusy=null; ltWait.delete(id); ltMsg('Recognition timed out'); ltPump(); } },20000);
-  Android.recognizeLive(id,JSON.stringify(P.payload)); // silent: no pop-up while recognising
-}
-function ltNewWordCheck(pg,q){ // pen goes down: if it is clearly a new word (gap to the right) or a new line, convert the finished word now
-  if(ltPenIn) return; // text-pen input: words are split by pauses only, never by position
-  if(!ltPend||!ltPend.items.length||ltPend.pg!==pg) return;
-  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
-  for(const {sd} of ltPend.items) for(const p of sd.pts){ if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y; }
-  const H=Math.max(y1-y0,14);
-  if(q.x-x1>0.55*H||q.y>y1+0.25*H){ clearTimeout(ltTimer); ltFlush(); }
-}
-window.__liveResult=function(id,text,ok){
-  const job=ltWait.get(id); ltWait.delete(id); if(ltBusy===id) ltBusy=null;
-  try{ ltHandle(job,text,ok); } finally{ ltPump(); }
-};
-function ltHandle(job,text,ok){
-  if(!job) return;
-  if(!ok){ ltMsg(text); return; }
-  text=(text||'').trim(); if(!text){ ltMsg('Could not read that — try writing a bit clearer'); return; }
-  const pg=job.pg, box=job.box, items=job.items.filter(it=>it.layer.strokes.includes(it.sd)); // skip strokes undone / erased meanwhile
-  if(!items.length||!pg.boxes.includes(box)) return;
-  const removed=[], keep=new Set(items.map(i=>i.sd));
-  for(const layer of new Set(items.map(i=>i.layer))){
-    for(let i=layer.strokes.length-1;i>=0;i--){ const sd=layer.strokes[i]; if(keep.has(sd)){ layer.strokes.splice(i,1); removed.push({layer,sd,index:i}); } }
-  }
-  if(ltPenIn&&box.editor){ // text-pen input: insert the word at the caret of the open editor
-    pg.history.push({t:'live',items:removed,box:null,oldDoc:null,newDoc:null,prevLast:null});
-    for(const r of removed) inkRemove(r.layer,r.sd);
-    penInsert(box,text); asMark(pg,true); return;
-  }
-  const oldDoc=box.doc, first=job.lines[0], prev=box._ltLast;
-  const newLine=!!prev&&first.y0+(first.y1-first.y0)*0.5>prev.y1; // written below the previous batch = a new line
-  const lines=ltLines(box), add=text.split('\n');
-  if(lines.length&&!newLine) lines[lines.length-1]=(lines[lines.length-1]+' '+add[0]).trim(); else lines.push(add[0]);
-  for(let k=1;k<add.length;k++) lines.push(add[k]);
-  const newDoc=TE.mdToRawDoc(lines.join('\n'));
-  box._ltLast={y1:job.lines[job.lines.length-1].y1};
-  ltApply(box,newDoc);
-  pg.history.push({t:'live',items:removed,box,oldDoc,newDoc,prevLast:prev});
-  for(const r of removed) inkRemove(r.layer,r.sd);
-}
-/* TEXT PEN INPUT — third way to fill a TipTap box (keyboard / pen / paste). The keyboard is hidden, whatever is written with the
-   pen is split into words by PAUSES only (position is ignored), each word is recognised and inserted at the caret.
-   Backspace and Enter buttons sit in the selection bar. */
+/* ---- text helpers shared by the pane ---- */
 function penCtx(box){ try{ const st=box.editor.state, f=st.selection.from; return st.doc.textBetween(Math.max(0,f-20),f,'\n'); }catch(e){ return ''; } }
-function penInsert(box,text){
+function penPut(box,text){ // type text at the caret without ever focusing the editor (focusing would bring the keyboard back)
+  const ed=box&&box.editor; if(!ed) return;
+  try{ ed.view.dispatch(ed.state.tr.insertText(text)); }catch(e){ try{ ed.chain().insertContent(text).run(); }catch(_){} }
+  penGrow(box); HW.reveal();
+}
+function penInsert(box,text){ // a recognised word: add a space before it when the caret follows a word
   const ed=box.editor; if(!ed) return;
   let sp=''; try{ const st=ed.state, f=st.selection.from, b=st.doc.textBetween(Math.max(0,f-1),f,'\n'); if(b&&!/\s/.test(b)&&!/^[.,;:!?)\]}%]+$/.test(text)) sp=' '; }catch(e){}
-  ed.chain().insertContent({type:'text',text:sp+text}).run(); // never .focus(): that would bring the keyboard back
-  penGrow(box);
+  penPut(box,sp+text);
 }
 function penGrow(box){ // make the box taller when the text no longer fits
   try{
@@ -4948,62 +4805,258 @@ function penKey(box,key){ // Backspace / Enter inside the open editor, no keyboa
   }
   penGrow(box);
 }
-let penRep=0, penRepIv=0;
-function penBack(down){ // Backspace button: delete now, keep deleting while held
-  const box=ltTarget; if(!ltPenIn||!box) return;
-  penStopRep(); penKey(box,'Backspace');
-  penRep=setTimeout(()=>{ penRepIv=setInterval(()=>penKey(ltTarget,'Backspace'),70); },420);
-  const up=()=>{ penStopRep(); document.removeEventListener('pointerup',up,true); document.removeEventListener('pointercancel',up,true); };
-  document.addEventListener('pointerup',up,true); document.addEventListener('pointercancel',up,true);
-}
-function penStopRep(){ clearTimeout(penRep); clearInterval(penRepIv); penRep=0; penRepIv=0; }
-function penCaret(box,toEnd){ // put the caret at the end (new editor, or a text range was selected) and draw a blinking caret while the pen is the input
-  const ed=box&&box.editor; if(!ed||!TT.TextSelection) return;
-  try{
-    const st=ed.state, sel=st.selection;
-    if(toEnd) ed.view.dispatch(st.tr.setSelection(TT.TextSelection.atEnd(st.doc)));
-    else if(!sel.empty) ed.view.dispatch(st.tr.setSelection(TT.TextSelection.create(st.doc,sel.to)));
-    if(!ed._penCaret&&TT.Plugin&&TT.Decoration&&TT.DecorationSet){
-      ed._penCaret=1;
-      ed.registerPlugin(new TT.Plugin({ key:new TT.PluginKey('penCaret'), props:{ decorations(state){
-        if(!(ltPenIn&&ltTarget===box)) return null;
-        const w=()=>{ const c=document.createElement('span'); c.className='ltCaret'; return c; };
-        return TT.DecorationSet.create(state.doc,[TT.Decoration.widget(state.selection.from,w,{side:1,key:'penCaret'})]);
-      } } }));
-      ed.view.dispatch(ed.state.tr);
-    } else ed.view.dispatch(ed.state.tr); // redraw the caret
-  }catch(e){ console.warn('[pen] caret',e); }
-}
-function penOn(box){
-  if(!box||box.engine!=='v2'||box.kind!=='text') return;
-  const go=()=>{
-    const fresh=!box.editor;
-    if(fresh) ENGINES.v2.startEdit(box);
-    if(!box.editor) return;
-    penCaret(box,fresh); // cursor at the end of the existing text
-    ltRelease(); clearTimeout(ltTimer); ltPend=null; ltQueue.length=0;
-    liveOn=true; liveArmed=false; ltDrafting=false; ltPenIn=true; ltTarget=box;
-    box.el.style.pointerEvents='none'; box.el.classList.add('ltTarget'); // the pen writes on the page, not inside the box
-    $('mLive').classList.add('on');
-    if(mode!=='pen'&&mode!=='ink'&&mode!=='cal') setMode(penVar);
-    try{ box.editor.view.dom.blur(); }catch(e){}
-    if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); // hides the keyboard
-    if(lsSel) lsShowBox();
+const HW=(function(){
+  const DELAY=600, MINH=190, K={mode:'inkdown.hw.mode',auto:'inkdown.hw.auto',h:'inkdown.hw.h'};
+  const store={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+  const S={ open:false, box:null, mode:store.get(K.mode)==='pen'?'pen':'kbd', auto:store.get(K.auto)==='1', ratio:0.4, lpMissing:false, lpBusy:false };
+  { const r=parseFloat(store.get(K.h)); if(r>0.15&&r<0.9) S.ratio=r; }
+  const KBD='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>';
+  const SPC='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11v4h16v-4"/></svg>';
+  let pane,cv,ctx,stEl,stTx,dlBtn,hintEl,autoBtn;
+  let strokes=[], cur=null, pend=[], timer=0, q=[], busy=0, idc=0, saidT=0, fadeRaf=0, rep=0, repIv=0;
+  const wait=new Map();
+
+  const st=document.createElement('style');
+  st.textContent=
+   '#hwPane{position:fixed;left:10px;right:10px;bottom:calc(8px + env(safe-area-inset-bottom,0px));max-width:860px;margin:0 auto;z-index:9500;display:flex;flex-direction:column;box-sizing:border-box;border-radius:20px;background:var(--gl-pop,rgba(28,31,44,.96));color:var(--fg,#e5e7eb);border:1px solid var(--gl-bd,rgba(255,255,255,.16));box-shadow:0 10px 36px rgba(0,0,0,.45);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);font-family:var(--font,system-ui,sans-serif);transform:translateY(calc(100% + 28px));visibility:hidden;transition:transform .24s cubic-bezier(.2,.8,.2,1),visibility 0s .24s;touch-action:none;-webkit-user-select:none;user-select:none}'
+  +'#hwPane.open{transform:none;visibility:visible;transition:transform .24s cubic-bezier(.2,.8,.2,1),visibility 0s}'
+  +'#hwPane .hwh{height:24px;flex:none;display:flex;align-items:center;justify-content:center;cursor:ns-resize;touch-action:none}'
+  +'#hwPane .hwh i{width:46px;height:5px;border-radius:3px;background:currentColor;opacity:.35}'
+  +'#hwPane .hwcv{position:relative;flex:1;min-height:0;margin:0 10px;border-radius:14px;background:rgba(127,127,127,.12);overflow:hidden}'
+  +'#hwPane canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}'
+  +'#hwPane .hwhint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;font:500 14px/1.3 var(--font,system-ui,sans-serif);opacity:.38;text-align:center;padding:0 16px}'
+  +'#hwPane .hwst{flex:none;display:flex;align-items:center;gap:8px;padding:5px 16px 3px;min-height:26px;box-sizing:border-box;font:500 12px/1.3 var(--font,system-ui,sans-serif)}'
+  +'#hwPane .hwst .tx{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.8}'
+  +'#hwPane .hwst.busy .tx::before{content:"";display:inline-block;width:10px;height:10px;margin-right:7px;vertical-align:-1px;border-radius:50%;border:2px solid rgba(127,127,127,.4);border-top-color:var(--ac,#60a5fa);animation:hwSp .8s linear infinite}'
+  +'#hwPane .hwst.err .tx{color:#f87171;opacity:1}#hwPane .hwst.warn .tx{color:#fbbf24;opacity:1}#hwPane .hwst.ok .tx{color:#4ade80;opacity:1}'
+  +'#hwPane .hwdl{flex:none;padding:5px 11px;border-radius:999px;border:1px solid var(--ac,#60a5fa);background:var(--ac,#60a5fa);color:#fff;font:600 12px/1 var(--font,system-ui,sans-serif)}#hwPane .hwdl[disabled]{opacity:.55}'
+  +'@keyframes hwSp{to{transform:rotate(360deg)}}'
+  +'#hwPane .hwk{flex:none;display:flex;gap:8px;padding:4px 10px 10px}'
+  +'#hwPane .hwk button{flex:1;height:44px;border-radius:12px;border:1px solid var(--gl-bd,rgba(255,255,255,.16));background:rgba(127,127,127,.14);color:inherit;font:600 13px/1 var(--font,system-ui,sans-serif);display:flex;align-items:center;justify-content:center;gap:6px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}'
+  +'#hwPane .hwk button:active{background:rgba(127,127,127,.3)}'
+  +'#hwPane .hwk button.sp{flex:3}#hwPane .hwk button.on{background:var(--ac,#60a5fa);border-color:var(--ac,#60a5fa);color:#fff}'
+  +'#hwPane .hwk svg{width:22px;height:22px}';
+  document.head.appendChild(st);
+
+  const vh=()=>{ const v=window.visualViewport; return v?v.height:innerHeight; };
+  const hpx=()=>{ const H=vh(); return Math.round(Math.max(MINH,Math.min(H*0.75,H*S.ratio))); };
+  const valid=b=>!!(b&&b.editor&&b.page&&b.page.boxes.includes(b));
+  const hasApp=()=>!!(window.Android&&Android.recognizeLive);
+  const idle=()=>hasApp()?'Write a word with the stylus, then pause':'Recognition works only in the Android app';
+
+  function say(msg,kind,ms){ // status strip: replaces the toasts
+    if(!stEl) return; clearTimeout(saidT);
+    stTx.textContent=msg||idle(); stEl.className='hwst'+(msg&&kind?' '+kind:'');
+    if(msg&&ms) saidT=setTimeout(()=>{ if(S.lpMissing){ say('Handwriting pack needed — download it once (internet needed)','warn'); } else say('','',0); },ms);
+  }
+  function showDl(){ if(!dlBtn) return; dlBtn.style.display=S.lpMissing?'':'none'; dlBtn.disabled=S.lpBusy; dlBtn.textContent=S.lpBusy?'Downloading…':'Download handwriting pack'; }
+  function checkPack(){ // first time the pane opens: is the language pack on the phone? if not, offer an inline button
+    if(!(window.__lib&&__lib.check)) return;
+    __lib.check(has=>{ S.lpMissing=!has; showDl(); if(!has) say('Handwriting pack needed — download it once (internet needed)','warn'); });
+  }
+  function download(){
+    if(S.lpBusy||!(window.__lib&&__lib.download)) return;
+    S.lpBusy=true; showDl(); say('Downloading the handwriting pack… please wait','busy');
+    __lib.download((ok,msg)=>{
+      S.lpBusy=false;
+      if(ok){ S.lpMissing=false; say('Handwriting pack ready','ok',2200); pump(); }
+      else say(msg==='offline'?'No internet connection — connect and try again':'Download failed — check internet / Google Play services','err',6000);
+      showDl();
+    });
+  }
+
+  /* ---- ink canvas (own strokes, never the page ink) ---- */
+  function size(){
+    if(!cv) return; const r=cv.getBoundingClientRect(), d=window.devicePixelRatio||1;
+    cv.width=Math.max(1,Math.round(r.width*d)); cv.height=Math.max(1,Math.round(r.height*d)); ctx.setTransform(d,0,0,d,0,0); draw();
+  }
+  function trace(s){
+    const p=s.pts; ctx.beginPath(); ctx.moveTo(p[0].x,p[0].y);
+    if(p.length<3){ const e=p[p.length-1]; ctx.lineTo(e.x+0.01,e.y); }
+    else{ for(let i=1;i<p.length-1;i++) ctx.quadraticCurveTo(p[i].x,p[i].y,(p[i].x+p[i+1].x)/2,(p[i].y+p[i+1].y)/2); ctx.lineTo(p[p.length-1].x,p[p.length-1].y); }
+    ctx.stroke();
+  }
+  function draw(){
+    if(!ctx) return; const r=cv.getBoundingClientRect(); ctx.clearRect(0,0,r.width,r.height);
+    ctx.lineCap='round'; ctx.lineJoin='round'; ctx.lineWidth=2.8; ctx.strokeStyle=getComputedStyle(pane).color||'#e5e7eb';
+    for(const s of strokes){ ctx.globalAlpha=s.a; trace(s); }
+    ctx.globalAlpha=1; hint();
+  }
+  function hint(){ if(hintEl) hintEl.style.display=strokes.length?'none':'flex'; }
+  function fade(list){ const t=performance.now(); for(const s of list){ s.fadeAt=t; s.a0=s.a; } if(!fadeRaf) fadeRaf=requestAnimationFrame(tick); }
+  function tick(){
+    fadeRaf=0; const now=performance.now(); let more=false;
+    for(const s of strokes) if(s.fadeAt){ const k=(now-s.fadeAt-120)/320; s.a=Math.max(0,s.a0*(1-Math.max(0,k))); if(s.a>0.01) more=true; }
+    strokes=strokes.filter(s=>!s.fadeAt||s.a>0.01); draw();
+    if(more) fadeRaf=requestAnimationFrame(tick);
+  }
+
+  /* ---- recognition queue: one word at a time, in order, each with the text before the caret as context ---- */
+  function flush(){ // the pause is over: the strokes written so far are one finished word
+    timer=0; if(cur){ timer=setTimeout(flush,250); return; } if(!pend.length) return;
+    const job={box:S.box,strokes:pend}; pend=[]; for(const s of job.strokes) s.a=0.55; draw(); q.push(job); pump();
+  }
+  function pump(){
+    if(busy||!q.length) return;
+    const job=q[0], box=job.box;
+    if(!valid(box)){ q.shift(); fade(job.strokes); return pump(); } // the box was closed meanwhile
+    if(!hasApp()){ for(const j of q) fade(j.strokes); q.length=0; say('Recognition works only in the Android app','err',5000); return; }
+    if(S.lpMissing){ showDl(); say('Download the handwriting pack to turn your writing into text','warn'); return; }
+    q.shift();
+    const P=inkPayload(job.strokes.map(sd=>({sd})),penCtx(box),true); // true = one line, split by pauses only
+    const id=++idc; busy=id; wait.set(id,job); say('Recognising…','busy');
+    setTimeout(()=>{ if(busy===id){ busy=0; wait.delete(id); fade(job.strokes); say('Recognition timed out — try again','err',4000); pump(); } },20000);
+    Android.recognizeLive(id,JSON.stringify(P.payload));
+  }
+  window.__liveResult=function(id,text,ok){
+    const job=wait.get(id); if(!job) return; wait.delete(id); if(busy===id) busy=0;
+    try{
+      if(!ok){ fade(job.strokes); say(text||'Recognition failed','err',6000); return; }
+      text=(text||'').trim();
+      if(!text){ fade(job.strokes); say('Could not read that — try writing a bit clearer','warn',3000); return; }
+      if(valid(job.box)) penInsert(job.box,text);
+      fade(job.strokes); if(!q.length&&!pend.length&&!busy) say('','',0);
+    } finally{ pump(); }
   };
-  const run=()=>{ if(TE.ready) go(); else TE.load().then(go).catch(()=>{}); };
-  (window.__penEnsure||(f=>f()))(run); // the app asks to download the language pack first when it is missing
-}
-function penForceOff(){ // quiet exit (box closed / tool changed)
-  penStopRep(); clearTimeout(ltTimer); ltPend=null; ltQueue.length=0;
-  ltPenIn=false; liveOn=false; liveArmed=false; ltRelease(); $('mLive').classList.remove('on');
-}
-function penOff(n){ // back to the keyboard: finish the words still waiting, then focus the editor again
-  n=n||0;
-  if((ltPend||ltBusy||ltQueue.length)&&n<20){ if(ltPend&&!cur) ltFlush(); setTimeout(()=>penOff(n+1),250); return; }
-  const box=ltTarget; penForceOff();
-  if(box&&box.editor){ try{ box.editor.view.dispatch(box.editor.state.tr); box.editor.commands.focus(); }catch(e){} } // caret widget off, keyboard back
-  if(lsSel) lsShowBox();
-}
+
+  /* ---- keyboard <-> pen ---- */
+  function noKeyboard(box,on){ // inputmode=none keeps the box tappable (move the caret, scroll) without raising the keyboard
+    if(!valid(box)) return; const dom=box.editor.view.dom;
+    dom.setAttribute('inputmode',on?'none':'text'); dom.blur();
+    setTimeout(()=>{ if(!valid(box)||S.open!==on||(on&&S.box!==box)) return; try{ box.editor.view.focus(); }catch(e){} },on?80:30);
+  }
+  function relayoutPill(){ if(typeof lsSel!=='undefined'&&lsSel&&lsSel.pg&&lsSel.pg.lsBox&&lsSel.pg.lsBox.style.display==='block') lsShowBox(); }
+  function reserve(){ return S.open?hpx()+18:0; }
+  function layout(){
+    if(!pane) return; pane.style.height=hpx()+'px';
+    wrap.style.paddingBottom=S.open?'calc(env(safe-area-inset-bottom,0px) + '+(reserve()+60)+'px)':'';
+    size(); relayoutPill(); reveal();
+  }
+  function reveal(){ // scroll the caret line into view above the pane (the way the keyboard does it)
+    const b=S.box; if(!S.open||!valid(b)) return;
+    try{
+      const ed=b.editor, c=ed.view.coordsAtPos(ed.state.selection.head), bar=document.getElementById('bar');
+      const limit=vh()-reserve()-70, top=(bar?bar.getBoundingClientRect().bottom:66)+10;
+      if(c.bottom>limit) wrap.scrollTop+=c.bottom-limit; else if(c.top<top) wrap.scrollTop-=top-c.top;
+    }catch(e){}
+  }
+  function build(){
+    pane=document.createElement('div'); pane.id='hwPane';
+    pane.innerHTML='<div class="hwh" title="Drag to resize"><i></i></div>'
+      +'<div class="hwcv"><canvas></canvas><div class="hwhint">Write here with the stylus</div></div>'
+      +'<div class="hwst"><span class="tx"></span><button type="button" class="hwdl" style="display:none">Download handwriting pack</button></div>'
+      +'<div class="hwk"><button type="button" data-k="auto" title="Auto: open this pane when the stylus touches the box">Auto</button>'
+      +'<button type="button" data-k="sp" class="sp" title="Space">'+SPC+'</button>'
+      +'<button type="button" data-k="bsp" title="Backspace (hold to repeat)">'+SB_BSP+'</button>'
+      +'<button type="button" data-k="ent" title="Enter (new line)">'+SB_ENT+'</button>'
+      +'<button type="button" data-k="kb" title="Back to the keyboard">'+KBD+'</button></div>';
+    document.body.appendChild(pane);
+    cv=pane.querySelector('canvas'); ctx=cv.getContext('2d'); stEl=pane.querySelector('.hwst'); stTx=stEl.querySelector('.tx');
+    dlBtn=pane.querySelector('.hwdl'); hintEl=pane.querySelector('.hwhint'); autoBtn=pane.querySelector('[data-k="auto"]');
+    autoBtn.classList.toggle('on',S.auto);
+    pane.addEventListener('pointerdown',e=>e.stopPropagation()); // never reaches the page behind
+    dlBtn.addEventListener('click',download);
+
+    // writing: stylus only
+    cv.addEventListener('pointerdown',e=>{
+      if(e.pointerType!=='pen'){ if(e.pointerType==='touch') say('Stylus only for now — write with the pen','warn',2500); return; }
+      e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(_){}
+      clearTimeout(timer); timer=0; const r=cv.getBoundingClientRect();
+      cur={id:e.pointerId,pts:[{x:e.clientX-r.left,y:e.clientY-r.top}],a:1,t0:performance.now()}; strokes.push(cur); hint();
+    });
+    cv.addEventListener('pointermove',e=>{
+      if(!cur||e.pointerId!==cur.id) return; e.preventDefault();
+      const r=cv.getBoundingClientRect(), evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];
+      ctx.lineCap='round'; ctx.lineWidth=2.8; ctx.strokeStyle=getComputedStyle(pane).color||'#e5e7eb'; ctx.globalAlpha=1;
+      for(const ev of (evs.length?evs:[e])){
+        const p={x:ev.clientX-r.left,y:ev.clientY-r.top}, l=cur.pts[cur.pts.length-1];
+        if(Math.abs(p.x-l.x)+Math.abs(p.y-l.y)<0.5) continue;
+        cur.pts.push(p); ctx.beginPath(); ctx.moveTo(l.x,l.y); ctx.lineTo(p.x,p.y); ctx.stroke();
+      }
+    });
+    const up=e=>{
+      if(!cur||e.pointerId!==cur.id) return; const s=cur; cur=null;
+      if(s.pts.length<2) s.pts.push({...s.pts[0]}); // a dot (i, full stop)
+      s.t1=performance.now(); STROKE_T.set(s,{t0:s.t0,t1:s.t1}); pend.push(s);
+      clearTimeout(timer); timer=setTimeout(flush,DELAY); // pause = end of the word
+    };
+    cv.addEventListener('pointerup',up); cv.addEventListener('pointercancel',up);
+
+    // resize handle
+    const hd=pane.querySelector('.hwh');
+    hd.addEventListener('pointerdown',e=>{
+      e.preventDefault(); hd.setPointerCapture(e.pointerId); const y0=e.clientY, h0=hpx();
+      const mv=e2=>{ const H=vh(), h=Math.max(MINH,Math.min(H*0.75,h0+(y0-e2.clientY))); S.ratio=h/H; layout(); };
+      const end=()=>{ hd.removeEventListener('pointermove',mv); hd.removeEventListener('pointerup',end); hd.removeEventListener('pointercancel',end); store.set(K.h,String(S.ratio.toFixed(3))); };
+      hd.addEventListener('pointermove',mv); hd.addEventListener('pointerup',end); hd.addEventListener('pointercancel',end);
+    });
+
+    // keys: pressing them never takes focus away from the box
+    const keys=pane.querySelector('.hwk');
+    keys.addEventListener('pointerdown',e=>{
+      const b=e.target.closest('button'); if(!b) return; e.preventDefault();
+      if(b.dataset.k==='bsp'){ // Backspace repeats while held
+        try{ b.setPointerCapture(e.pointerId); }catch(_){} stopRep(); penKey(S.box,'Backspace'); reveal();
+        rep=setTimeout(()=>{ repIv=setInterval(()=>{ if(!valid(S.box)) return stopRep(); penKey(S.box,'Backspace'); },70); },420);
+      }
+    });
+    ['pointerup','pointercancel','lostpointercapture'].forEach(t=>keys.addEventListener(t,stopRep));
+    keys.addEventListener('click',e=>{
+      const b=e.target.closest('button'); if(!b) return; const k=b.dataset.k, box=S.box;
+      if(k==='sp') penPut(box,' ');
+      else if(k==='ent'){ penKey(box,'Enter'); reveal(); }
+      else if(k==='kb') close(true,true);
+      else if(k==='auto'){ S.auto=!S.auto; store.set(K.auto,S.auto?'1':'0'); autoBtn.classList.toggle('on',S.auto); say(S.auto?'Auto on — the pane opens when the stylus touches the box':'Auto off','ok',2500); }
+    });
+    window.addEventListener('resize',()=>{ if(S.open) layout(); });
+    if(window.visualViewport) visualViewport.addEventListener('resize',()=>{ if(S.open) layout(); });
+  }
+  function stopRep(){ clearTimeout(rep); clearInterval(repIv); rep=0; repIv=0; }
+
+  function open(box,persist){
+    if(!box||box.engine!=='v2'||box.kind!=='text') return;
+    if(persist){ S.mode='pen'; store.set(K.mode,'pen'); }
+    if(!box.editor){
+      if(!TE.ready){ TE.load().then(()=>open(box,false)).catch(()=>{ ltMsg('The text engine needs internet on first use'); }); return; }
+      ENGINES.v2.startEdit(box); // (with mode "pen" this already opens the pane, see onEdit)
+      if(!box.editor) return;
+    }
+    if(S.open&&S.box===box) { relayoutPill(); return; }
+    if(!pane) build();
+    if(pend.length) flush();
+    S.box=box; S.open=true; pane.classList.add('open');
+    say('','',0); showDl(); noKeyboard(box,true); layout(); checkPack(); relayoutPill();
+  }
+  function close(toKeyboard,persist){
+    if(!S.open) return; const box=S.box;
+    if(persist){ S.mode='kbd'; store.set(K.mode,'kbd'); }
+    clearTimeout(timer); timer=0; if(pend.length&&valid(box)) flush(); // a word just written still converts
+    S.open=false; stopRep(); pane.classList.remove('open'); wrap.style.paddingBottom='';
+    if(valid(box)){ const dom=box.editor.view.dom; dom.setAttribute('inputmode','text'); if(toKeyboard) noKeyboard(box,false); }
+    setTimeout(()=>{ if(!S.open){ strokes=strokes.filter(s=>q.some(j=>j.strokes.includes(s))||s===cur); draw(); } },300);
+    relayoutPill();
+  }
+
+  // pen touches the box while Auto is on: open the pane before the keyboard can appear
+  wrap.addEventListener('pointerdown',e=>{
+    if(!S.auto||S.open||e.pointerType!=='pen'||!e.target.closest) return;
+    const el=e.target.closest('.tbox.v2.editing'); if(!el) return;
+    for(const pg of pages) for(const b of pg.boxes) if(b.el===el&&valid(b)){ open(b,false); return; }
+  },true);
+
+  return {
+    get shown(){ return S.open; }, get box(){ return S.box; }, get mode(){ return S.mode; },
+    isOn:b=>S.open&&S.box===b, kbdSvg:KBD, reserve, reveal, open, close,
+    toggle(box){ if(S.open&&S.box===box) close(true,true); else open(box,true); },
+    attrs:()=>(S.open||S.mode==='pen')?{inputmode:'none'}:{}, // given to a new editor so the keyboard never flashes up
+    onEdit(b){ // a TipTap editor was just created
+      if(S.open){ if(S.box!==b){ if(pend.length) flush(); S.box=b; } noKeyboard(b,true); relayoutPill(); reveal(); }
+      else if(S.mode==='pen') open(b,false);
+    },
+    onEnd(b){ if(S.open&&S.box===b) close(false,false); } // the box stopped being edited
+  };
+})();
+
 /* UNIFIED SELECTION TOOLBAR — one bar for everything: Lasso / Select selections (ink, text, images, mixed) AND a single
    text box / image (Text tool, Image tool, Select tool). The bar adapts to what is selected:
    text box  -> Move · Edit (Render while editing) · Aa · | Rotate · Copy · Cut · Delete
@@ -5031,7 +5084,7 @@ const sbBtn=(a,icon,title,label,cls)=>'<button type="button" data-a="'+a+'" titl
 function sbSig(s){
   if(s.kind!=='single') return (s.sid||(s.sid=++lsSid))+':m';
   const b=s.boxes[0], cl=b.el.classList;
-  return (s.sid||(s.sid=++lsSid))+':'+b.kind+(cl.contains('editing')?'e':'')+(cl.contains('cropping')?'c':'')+(b.engine==='v2'&&b.mode==='raw'?'r':'')+(ltPenIn&&ltTarget===b?'p':'');
+  return (s.sid||(s.sid=++lsSid))+':'+b.kind+(cl.contains('editing')?'e':'')+(cl.contains('cropping')?'c':'')+(b.engine==='v2'&&b.mode==='raw'?'r':'')+(HW.isOn(b)?'p':'');
 }
 function v2Fmt(box,btn){ // s6zo: brush button = show / hide the formatting bar of a TipTap box
   if(!box.editor) ENGINES.v2.startEdit(box);
@@ -5047,10 +5100,9 @@ function sbBuild(bar,s){
       h+=sbBtn('move',TB_ICON.move,'Drag to move the box · use the corner / edge handles to resize','','fMv');
       if(box.kind==='text') h+=(box.engine==='v2')?sbBtn('paste',SB_PASTE,'Paste at the cursor')+sbBtn('render',TB_ICON.render,'Render markdown')+sbBtn('font',BRUSH_SVG,'Formatting bar','','fFont'+(box.fmt?' on':'')):editing?sbBtn('render',TB_ICON.render,'Render'):sbBtn('edit',TB_ICON.edit,'Edit')+sbBtn('font',BRUSH_SVG,'Text style: colour, font, size','','fFont');
       else h+=sbBtn('ratio',TB_ICON.ratio,'Keep aspect ratio when dragging corners','',box.keepRatio?'on':'')+sbBtn('crop',TB_ICON.crop,'Crop');
-      if(box.kind==='text'&&box.engine==='v2'){ // text pen input + its Backspace / Enter keys
-        const pn=ltPenIn&&ltTarget===box;
-        h+=sbBtn('pen',SB_REC,'Text pen: write with the pen instead of the keyboard','',pn?'on':'');
-        if(pn) h+=sbBtn('bsp',SB_BSP,'Backspace (hold to repeat)')+sbBtn('ent',SB_ENT,'Enter (new line)');
+      if(box.kind==='text'&&box.engine==='v2'){ // one switch: keyboard <-> handwriting pane (shows where a tap takes you)
+        const on=HW.isOn(box);
+        h+=sbBtn('hw',on?HW.kbdSvg:SB_REC,on?'Back to the keyboard':'Write with the stylus (handwriting pane)','',on?'on':'');
       }
       h+='<i class="sep"></i>';
     }
@@ -5086,7 +5138,6 @@ function lsShowBox(dx=0,dy=0){
     const bar=document.createElement('div'); bar.className='sel-bar';
     bar.addEventListener('pointerdown',e=>{
       e.stopPropagation();
-      if(e.target.closest&&e.target.closest('[data-a="bsp"]')){ e.preventDefault(); penBack(true); return; } // Backspace: repeats while held
       const mv=e.target.closest&&e.target.closest('.fMv'); if(!mv||!lsSel||lsSel.kind!=='single') return;
       const box=lsSel.boxes[0]; e.preventDefault(); mv.setPointerCapture(e.pointerId);
       const sx=box.xPct/100*box.page.w, sy=box.yPct/100*box.page.h, p0=pagePos(e,box.page), s0=boxSnap(box);
@@ -5098,9 +5149,7 @@ function lsShowBox(dx=0,dy=0){
       e.stopPropagation(); const b=e.target.closest('button'); if(!b||!lsSel) return;
       const a=b.dataset.a, box=lsSel.kind==='single'?lsSel.boxes[0]:null;
       if(a==='done'){ sbDone(b); return; }
-      if(a==='bsp') return; // handled on pointerdown
-      if(a==='ent'){ if(box) penKey(box,'Enter'); return; }
-      if(a==='pen'){ if(box){ if(ltPenIn&&ltTarget===box) penOff(); else penOn(box); } return; }
+      if(a==='hw'){ if(box) HW.toggle(box); return; }
       const via=cls=>{ const t=box&&box.tb&&box.tb.querySelector(cls); if(t) t.click(); }; // reuse the box's own edit / render / font / crop / ratio logic
       if(a==='rec') lsRecognize(); else if(a==='copy') lsCopy(); else if(a==='cut') lsCut(); else if(a==='del') lsDelete();
       else if(a==='rot'){ if(box){ if(box.endCrop) box.endCrop(true); boxRotToggle(box); b.classList.toggle('on',!!box.rotOff); } else lsRotToggle(); }
@@ -5139,7 +5188,7 @@ function sbPlace(bar,instant){
     bar.classList.toggle('dockL',left); bar.classList.toggle('v1',!!(bx&&bx.engine!=='v2'));
     let bw=bar.offsetWidth||230; const sg=bar.querySelector('#v2tb'); if(sg) bw+=Math.max(0,sg.scrollWidth-sg.offsetWidth); bw=Math.min(bw,vw-12); const bh=bar.offsetHeight||40;
     bar.style.left=(left?ol+8:Math.max(ol+6,ol+(vw-bw)/2))+'px'; // formatting open: bottom-left corner, otherwise bottom centre
-    bar.style.top=Math.max(topEdge,ot+vh-bh-14)+'px';
+    bar.style.top=Math.max(topEdge,ot+vh-bh-14-HW.reserve())+'px'; // just above the handwriting pane when it is open
   };
   if(instant){ bar.style.transition='none'; go(); void bar.offsetWidth; bar.style.transition=''; } else go();
   if(typeof V2TB!=='undefined') V2TB.place(); // the formatting panel follows the bar
@@ -6944,7 +6993,7 @@ const ENGINES={
         extensions:b.mode==='raw'?TE.RAW_EXTENSIONS:TE.EXTENSIONS,
         content:b.doc,
         autofocus:'end',
-        editorProps:{ handlePaste:(view,ev)=>{ // raw (live-text) mode: plain lines; rendered mode: pasted markdown is converted to formatted content
+        editorProps:{ attributes:HW.attrs(), handlePaste:(view,ev)=>{ // raw (live-text) mode: plain lines; rendered mode: pasted markdown is converted to formatted content
           const cd=ev.clipboardData; if(!cd) return false;
           const t=cd.getData('text/plain'); if(!t) return false;
           if(b.mode!=='raw'&&(cd.getData('text/html')||'').indexOf('data-pm-slice')>=0) return false; // copied from a TipTap box: keep its formatting
@@ -6954,10 +7003,11 @@ const ENGINES={
         onTransaction:()=>{ if(b.editor) V2TB.sync(); },
         onSelectionUpdate:()=>{ if(b.editor) V2TB.sync(); }
       });
-      V2TB.attach(b); if(b.fmt) V2TB.show(b); // s6zo: the formatting bar opens only from the brush button. s6g: bottom format toolbar while editing (s6v: + multi-select)
+      V2TB.attach(b); if(b.fmt) V2TB.show(b); HW.onEdit(b); // s6zo: the formatting bar opens only from the brush button. s6g: bottom format toolbar while editing (s6v: + multi-select)
     },
     finishEdit:b=>{ // leave edit mode: keep the doc, drop the editor, draw the static view
       if(!b.editor) return;
+      HW.onEnd(b);
       b.doc=b.editor.getJSON(); b.editor.destroy(); b.editor=null; V2TB.hide(); b.fmt=false;
       b.el.classList.remove('editing');
       ENGINES.v2.render(b);
@@ -7136,6 +7186,7 @@ function boxRotToggle(box){ // click the toolbar's rotate button: a round handle
 }
 function removeBox(box){
   if(box.rotOff) box.rotOff();
+  HW.onEnd(box);
   if(box.editor){ try{ box.editor.destroy(); }catch(_){} box.editor=null; if(typeof V2TB!=="undefined") V2TB.hide(); }
   if(lsSel&&lsSel.boxes&&lsSel.boxes.includes(box)) clearLassoSel();
   const bl=box.page.boxes, i=bl.indexOf(box); if(i>=0) bl.splice(i,1);
@@ -10305,12 +10356,10 @@ setMode('pen');
   }
 
   /* ---- hooks (only the entry points; the ink engine itself is untouched) ---- */
-  window.__penEnsure=function(cb){ ensure('lp',cb); }; // text-pen button of a TipTap box
+  L.check=lpCheck; L.download=lpDownload; // used by the handwriting pane (inline "Download handwriting pack" button)
   try{
     var t=document.getElementById('txtAddV2'), o1=t&&t.onclick; // Text tool -> "Add TipTap box"
     if(o1) t.onclick=function(ev){ ev.stopPropagation(); var m=document.getElementById('txtMenu'); if(m) m.style.display='none'; ensure('tip',function(){ o1.call(t,ev); }); };
-    var lv=document.getElementById('mLive'), o2=lv&&lv.onclick; // Live text (handwriting -> TipTap text)
-    if(o2) lv.onclick=function(ev){ if(typeof liveOn!=='undefined'&&liveOn) return o2.call(lv,ev); ensure('lp',function(){ ensure('tip',function(){ o2.call(lv,ev); }); }); };
     if(typeof window.lsRecognize==='function'){ // lasso -> recognise handwriting button
       var o3=window.lsRecognize; window.lsRecognize=function(){ ensure('lp',function(){ o3(); }); };
     }
