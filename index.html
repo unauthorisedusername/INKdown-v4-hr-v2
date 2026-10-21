@@ -1523,6 +1523,27 @@ setTimeout(hide,120000);setTimeout(leave,130000); /* safety only: the text engin
 .sel-bar button.tick{color:#16a34a}
 .sel-bar button.tick.done{background:#16a34a;color:#fff;pointer-events:none;transition:background .15s,color .15s}
 .sel-bar button.tick.done svg{animation:tkDraw .3s ease}
+/* DOCKED TOOLBARS: the selection bar sits at the bottom centre; when the formatting (brush) button is on it slides to the left
+   edge as a vertical bar and the formatting panel (#v2tb) opens on its right. */
+.sel-bar{position:fixed;left:0;top:0;transition:left .32s cubic-bezier(.2,.9,.3,1),top .32s cubic-bezier(.2,.9,.3,1)}
+.sel-bar:not(.dockL){max-width:calc(100vw - 12px);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.sel-bar:not(.dockL)::-webkit-scrollbar{display:none}
+.sel-bar.v1:not(.dockL){overflow:visible}
+.sel-bar.dockL{flex-direction:column;align-items:stretch;border-radius:22px;overflow-x:hidden;overflow-y:auto;scrollbar-width:none}
+.sel-bar.dockL::-webkit-scrollbar{display:none}
+.sel-bar.dockL.v1{overflow:visible}
+.sel-bar.dockL .sep{width:auto;height:1px;margin:3px 6px;align-self:auto}
+.sel-bar.dockL .cnt{padding:4px 6px;text-align:center}
+.sel-bar.dockL button{justify-content:center}
+.sel-bar .fPop{top:auto;bottom:calc(100% + 6px)}
+.sel-bar.dockL .fPop{bottom:auto;top:0;left:calc(100% + 8px)}
+@keyframes v2dockIn{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
+#v2tb.dockL{transform:none;flex-direction:column;align-items:stretch;gap:4px;padding:6px;border-radius:22px;width:max-content;max-width:calc(100vw - 90px);overflow:hidden;animation:v2dockIn .28s ease both}
+#v2tb.dockL .lft{justify-content:center}
+#v2tb.dockL .lft .rg{display:none}
+#v2tb.dockL .pn{flex-direction:column;align-items:stretch;overflow-x:hidden;overflow-y:auto;min-height:0;flex:1 1 auto;padding:2px;gap:6px;-webkit-mask-image:none;mask-image:none;animation:none}
+#v2tb.dockL .grp{justify-content:center;flex-wrap:wrap;border-radius:14px}
+#v2tb.dockL .fin{align-self:stretch;margin:0}
 </style>
 </head>
 <body>
@@ -4736,7 +4757,7 @@ function lsSelectSingle(box){
 /* LIVE TEXT — draw a text box once (blinking caret), then write anywhere: after a pause the ink is split into lines,
    recognised line by line (ML Kit, native, with real pen timing + the text already in the box as context),
    appended at the caret and the ink removed. */
-let liveOn=false, liveArmed=false, ltDrafting=false, ltTarget=null, ltPend=null, ltTimer=0, ltId=0, ltMsgT=0, ltT0=0;
+let ltPenIn=false, liveOn=false, liveArmed=false, ltDrafting=false, ltTarget=null, ltPend=null, ltTimer=0, ltId=0, ltMsgT=0, ltT0=0;
 const ltWait=new Map(), STROKE_T=new WeakMap(), LT_DELAY=600, ltQueue=[]; let ltBusy=null;
 (function(){ const st=document.createElement('style'); st.textContent='.ltCaret{display:inline-block;width:2px;height:1.1em;margin-left:1px;vertical-align:text-bottom;background:#2563eb;animation:ltBlink 1s steps(1) infinite}@keyframes ltBlink{50%{opacity:0}}.tbox.ltTarget{outline:2px dashed #2563eb;outline-offset:2px}'; document.head.appendChild(st); })();
 function ltMsg(msg,sticky){
@@ -4759,7 +4780,14 @@ function ltRelease(){
   if(ltTarget&&ltTarget.el){ ltTarget.el.style.pointerEvents=''; ltTarget.el.classList.remove('ltTarget'); ltTarget.rd&&ltTarget.rd.querySelectorAll('.ltCaret').forEach(n=>n.remove()); }
   ltTarget=null;
 }
+function penCandidate(){ // the TipTap box being edited / selected
+  if(lsSel&&lsSel.kind==='single'){ const b=lsSel.boxes[0]; if(b&&b.kind==='text'&&b.engine==='v2') return b; }
+  for(const pg of pages) for(const b of pg.boxes) if(b.engine==='v2'&&b.el.classList.contains('editing')) return b;
+  return null;
+}
 $('mLive').onclick=()=>{
+  if(ltPenIn){ penOff(); return; }
+  if(!liveOn){ const pb=penCandidate(); if(pb){ penOn(pb); return; } }
   if(liveOn){
     const done=ltTargetOk()?ltTarget:null;
     liveOn=false; liveArmed=false; ltDrafting=false; ltRelease(); clearTimeout(ltTimer); ltPend=null; $('mLive').classList.remove('on');
@@ -4805,7 +4833,7 @@ function ltAdd(pg,layer,sd,t0,t1){
   clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,LT_DELAY);
 }
 /* Build the ML Kit payload: real timestamps, ink split into lines, writing area per line, text before the caret as context */
-function inkPayload(items,pre){
+function inkPayload(items,pre,one){ // one=true: every stroke is ONE line (text-pen input: position is ignored)
   const info=items.map(({sd})=>{
     let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; for(const p of sd.pts){ if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y; }
     return {sd,x0,y0,x1,y1,cy:(y0+y1)/2,h:Math.max(1,y1-y0),tt:STROKE_T.get(sd)};
@@ -4819,7 +4847,7 @@ function inkPayload(items,pre){
   const lines=[]; // group strokes into text lines by vertical position
   for(const i of info){
     let best=null,bd=1e9;
-    for(const L of lines){ const avg=L.sumH/L.n, pad=0.35*avg; const d=i.cy<L.y0-pad?L.y0-pad-i.cy:(i.cy>L.y1+pad?i.cy-L.y1-pad:0); if(d===0&&bd>0){ best=L; bd=0; } else if(d===0&&L===lines[lines.length-1]) best=L; }
+    if(one&&lines.length) best=lines[0]; else for(const L of lines){ const avg=L.sumH/L.n, pad=0.35*avg; const d=i.cy<L.y0-pad?L.y0-pad-i.cy:(i.cy>L.y1+pad?i.cy-L.y1-pad:0); if(d===0&&bd>0){ best=L; bd=0; } else if(d===0&&L===lines[lines.length-1]) best=L; }
     if(!best){ best={items:[],y0:1e9,y1:-1e9,x0:1e9,x1:-1e9,sumH:0,n:0}; lines.push(best); }
     best.items.push(i); best.y0=Math.min(best.y0,i.y0); best.y1=Math.max(best.y1,i.y1); best.x0=Math.min(best.x0,i.x0); best.x1=Math.max(best.x1,i.x1); best.sumH+=i.h; best.n++;
   }
@@ -4843,18 +4871,19 @@ function ltFlush(){ // the pending strokes are one finished word (or phrase): qu
 function ltPump(){ // one recognition at a time, in order, so each word gets the previous words as context
   if(ltBusy||!ltQueue.length) return;
   const job=ltQueue.shift();
+  if(ltPenIn&&!(ltTarget&&ltTarget.editor&&ltTargetOk())){ penForceOff(); return; } // the box was closed: leave pen input quietly
   if(!ltTargetOk()){ ltMsg('Tap Live text off and on again, then draw a text box'); ltQueue.length=0; return; }
   if(job.pg!==ltTarget.page){ ltMsg('Write on the same page as the text box'); return ltPump(); }
   if(!window.Android||!Android.recognizeLive){ ltMsg('Live text works only in the Android app'); ltQueue.length=0; return; }
   const items=job.items.filter(it=>it.layer.strokes.includes(it.sd));
   if(!items.length) return ltPump();
-  const P=inkPayload(items,ltLines(ltTarget).join('\n'));
+  const P=inkPayload(items,ltPenIn?penCtx(ltTarget):ltLines(ltTarget).join('\n'),ltPenIn);
   const id=++ltId; ltBusy=id; ltWait.set(id,{pg:job.pg,items,box:ltTarget,lines:P.lines});
   setTimeout(()=>{ if(ltBusy===id){ ltBusy=null; ltWait.delete(id); ltMsg('Recognition timed out'); ltPump(); } },20000);
-  ltMsg('Recognizing…',true);
-  Android.recognizeLive(id,JSON.stringify(P.payload));
+  Android.recognizeLive(id,JSON.stringify(P.payload)); // silent: no pop-up while recognising
 }
 function ltNewWordCheck(pg,q){ // pen goes down: if it is clearly a new word (gap to the right) or a new line, convert the finished word now
+  if(ltPenIn) return; // text-pen input: words are split by pauses only, never by position
   if(!ltPend||!ltPend.items.length||ltPend.pg!==pg) return;
   let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
   for(const {sd} of ltPend.items) for(const p of sd.pts){ if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y; }
@@ -4875,6 +4904,11 @@ function ltHandle(job,text,ok){
   for(const layer of new Set(items.map(i=>i.layer))){
     for(let i=layer.strokes.length-1;i>=0;i--){ const sd=layer.strokes[i]; if(keep.has(sd)){ layer.strokes.splice(i,1); removed.push({layer,sd,index:i}); } }
   }
+  if(ltPenIn&&box.editor){ // text-pen input: insert the word at the caret of the open editor
+    pg.history.push({t:'live',items:removed,box:null,oldDoc:null,newDoc:null,prevLast:null});
+    for(const r of removed) inkRemove(r.layer,r.sd);
+    penInsert(box,text); asMark(pg,true); return;
+  }
   const oldDoc=box.doc, first=job.lines[0], prev=box._ltLast;
   const newLine=!!prev&&first.y0+(first.y1-first.y0)*0.5>prev.y1; // written below the previous batch = a new line
   const lines=ltLines(box), add=text.split('\n');
@@ -4885,7 +4919,69 @@ function ltHandle(job,text,ok){
   ltApply(box,newDoc);
   pg.history.push({t:'live',items:removed,box,oldDoc,newDoc,prevLast:prev});
   for(const r of removed) inkRemove(r.layer,r.sd);
-  ltMsg('Added: '+text.replace(/\n/g,' / '));
+}
+/* TEXT PEN INPUT — third way to fill a TipTap box (keyboard / pen / paste). The keyboard is hidden, whatever is written with the
+   pen is split into words by PAUSES only (position is ignored), each word is recognised and inserted at the caret.
+   Backspace and Enter buttons sit in the selection bar. */
+function penCtx(box){ try{ const st=box.editor.state, f=st.selection.from; return st.doc.textBetween(Math.max(0,f-20),f,'\n'); }catch(e){ return ''; } }
+function penInsert(box,text){
+  const ed=box.editor; if(!ed) return;
+  let sp=''; try{ const st=ed.state, f=st.selection.from, b=st.doc.textBetween(Math.max(0,f-1),f,'\n'); if(b&&!/\s/.test(b)&&!/^[.,;:!?)\]}%]+$/.test(text)) sp=' '; }catch(e){}
+  ed.chain().insertContent({type:'text',text:sp+text}).run(); // never .focus(): that would bring the keyboard back
+  penGrow(box);
+}
+function penGrow(box){ // make the box taller when the text no longer fits
+  try{
+    const rd=box.rd; if(!rd||rd.scrollHeight<=rd.clientHeight+1) return;
+    const k=(rd.scrollHeight+8)/Math.max(1,rd.clientHeight);
+    box.hPct=Math.min(100-box.yPct,box.hPct*k); applyBoxRect(box); if(lsSel&&lsSel.kind==='single'){ lsSel.box=lsBounds([],[box]); lsShowBox(); }
+  }catch(e){}
+}
+function penKey(box,key){ // Backspace / Enter inside the open editor, no keyboard needed
+  const ed=box&&box.editor; if(!ed) return;
+  let ok=false; try{ ok=ed.commands.keyboardShortcut(key); }catch(e){}
+  if(!ok){
+    if(key==='Enter') ed.commands.splitBlock();
+    else{ const sel=ed.state.selection; if(!sel.empty) ed.chain().deleteSelection().run(); else if(sel.from>1) ed.chain().deleteRange({from:sel.from-1,to:sel.from}).run(); }
+  }
+  penGrow(box);
+}
+let penRep=0, penRepIv=0;
+function penBack(down){ // Backspace button: delete now, keep deleting while held
+  const box=ltTarget; if(!ltPenIn||!box) return;
+  penStopRep(); penKey(box,'Backspace');
+  penRep=setTimeout(()=>{ penRepIv=setInterval(()=>penKey(ltTarget,'Backspace'),70); },420);
+  const up=()=>{ penStopRep(); document.removeEventListener('pointerup',up,true); document.removeEventListener('pointercancel',up,true); };
+  document.addEventListener('pointerup',up,true); document.addEventListener('pointercancel',up,true);
+}
+function penStopRep(){ clearTimeout(penRep); clearInterval(penRepIv); penRep=0; penRepIv=0; }
+function penOn(box){
+  if(!box||box.engine!=='v2'||box.kind!=='text') return;
+  const go=()=>{
+    if(!box.editor) ENGINES.v2.startEdit(box);
+    if(!box.editor) return;
+    ltRelease(); clearTimeout(ltTimer); ltPend=null; ltQueue.length=0;
+    liveOn=true; liveArmed=false; ltDrafting=false; ltPenIn=true; ltTarget=box;
+    box.el.style.pointerEvents='none'; box.el.classList.add('ltTarget'); // the pen writes on the page, not inside the box
+    $('mLive').classList.add('on');
+    if(mode!=='pen'&&mode!=='ink'&&mode!=='cal') setMode(penVar);
+    try{ box.editor.view.dom.blur(); }catch(e){}
+    if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); // hides the keyboard
+    if(lsSel) lsShowBox();
+  };
+  const run=()=>{ if(TE.ready) go(); else TE.load().then(go).catch(()=>{}); };
+  (window.__penEnsure||(f=>f()))(run); // the app asks to download the language pack first when it is missing
+}
+function penForceOff(){ // quiet exit (box closed / tool changed)
+  penStopRep(); clearTimeout(ltTimer); ltPend=null; ltQueue.length=0;
+  ltPenIn=false; liveOn=false; liveArmed=false; ltRelease(); $('mLive').classList.remove('on');
+}
+function penOff(n){ // back to the keyboard: finish the words still waiting, then focus the editor again
+  n=n||0;
+  if((ltPend||ltBusy||ltQueue.length)&&n<20){ if(ltPend&&!cur) ltFlush(); setTimeout(()=>penOff(n+1),250); return; }
+  const box=ltTarget; penForceOff();
+  if(box&&box.editor){ try{ box.editor.commands.focus(); }catch(e){} }
+  if(lsSel) lsShowBox();
 }
 /* UNIFIED SELECTION TOOLBAR — one bar for everything: Lasso / Select selections (ink, text, images, mixed) AND a single
    text box / image (Text tool, Image tool, Select tool). The bar adapts to what is selected:
@@ -4902,6 +4998,8 @@ function lsRecognize(){ // send the lasso-selected ink to ML Kit (native) and sh
   ltMsg('Recognizing…',true);
   Android.recognizeInk(JSON.stringify(inkPayload(s.items.slice(),'').payload));
 }
+const SB_BSP=SB_SVG('<path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="M17 9l-5 5M12 9l5 5"/>');
+const SB_ENT=SB_SVG('<path d="M20 5v6a3 3 0 0 1-3 3H5"/><path d="M9 10l-4 4 4 4"/>');
 const SB_CUT=SB_SVG('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/>');
 /* s6t: text box colour. box.textColor = null -> automatic (light text on dark pages, near-black on light pages);
    a colour string = chosen by the user for that box. Inline colours set with the format toolbar still win over it. */
@@ -4911,7 +5009,7 @@ const sbBtn=(a,icon,title,label,cls)=>'<button type="button" data-a="'+a+'" titl
 function sbSig(s){
   if(s.kind!=='single') return (s.sid||(s.sid=++lsSid))+':m';
   const b=s.boxes[0], cl=b.el.classList;
-  return (s.sid||(s.sid=++lsSid))+':'+b.kind+(cl.contains('editing')?'e':'')+(cl.contains('cropping')?'c':'')+(b.engine==='v2'&&b.mode==='raw'?'r':'');
+  return (s.sid||(s.sid=++lsSid))+':'+b.kind+(cl.contains('editing')?'e':'')+(cl.contains('cropping')?'c':'')+(b.engine==='v2'&&b.mode==='raw'?'r':'')+(ltPenIn&&ltTarget===b?'p':'');
 }
 function v2Fmt(box,btn){ // s6zo: brush button = show / hide the formatting bar of a TipTap box
   if(!box.editor) ENGINES.v2.startEdit(box);
@@ -4927,6 +5025,11 @@ function sbBuild(bar,s){
       h+=sbBtn('move',TB_ICON.move,'Drag to move the box · use the corner / edge handles to resize','','fMv');
       if(box.kind==='text') h+=(box.engine==='v2'&&box.mode!=='raw')?sbBtn('raw',TB_ICON.edit,'Edit markdown source')+sbBtn('font',BRUSH_SVG,'Formatting bar','','fFont'+(box.fmt?' on':'')):editing?sbBtn('render',TB_ICON.render,'Render'):sbBtn('edit',TB_ICON.edit,'Edit')+(box.engine==='v2'?sbBtn('render',TB_ICON.render,'Render'):'')+sbBtn('font',BRUSH_SVG,'Text style: colour, font, size','','fFont');
       else h+=sbBtn('ratio',TB_ICON.ratio,'Keep aspect ratio when dragging corners','',box.keepRatio?'on':'')+sbBtn('crop',TB_ICON.crop,'Crop');
+      if(box.kind==='text'&&box.engine==='v2'){ // text pen input + its Backspace / Enter keys
+        const pn=ltPenIn&&ltTarget===box;
+        h+=sbBtn('pen',SB_REC,'Text pen: write with the pen instead of the keyboard','',pn?'on':'');
+        if(pn) h+=sbBtn('bsp',SB_BSP,'Backspace (hold to repeat)')+sbBtn('ent',SB_ENT,'Enter (new line)');
+      }
       h+='<i class="sep"></i>';
     }
     if(!box&&s.items.length) h+=sbBtn('rec',SB_REC,'Recognize handwriting','Recognize');
@@ -4960,6 +5063,7 @@ function lsShowBox(dx=0,dy=0){
     const bar=document.createElement('div'); bar.className='sel-bar';
     bar.addEventListener('pointerdown',e=>{
       e.stopPropagation();
+      if(e.target.closest&&e.target.closest('[data-a="bsp"]')){ e.preventDefault(); penBack(true); return; } // Backspace: repeats while held
       const mv=e.target.closest&&e.target.closest('.fMv'); if(!mv||!lsSel||lsSel.kind!=='single') return;
       const box=lsSel.boxes[0]; e.preventDefault(); mv.setPointerCapture(e.pointerId);
       const sx=box.xPct/100*box.page.w, sy=box.yPct/100*box.page.h, p0=pagePos(e,box.page), s0=boxSnap(box);
@@ -4971,6 +5075,9 @@ function lsShowBox(dx=0,dy=0){
       e.stopPropagation(); const b=e.target.closest('button'); if(!b||!lsSel) return;
       const a=b.dataset.a, box=lsSel.kind==='single'?lsSel.boxes[0]:null;
       if(a==='done'){ sbDone(b); return; }
+      if(a==='bsp') return; // handled on pointerdown
+      if(a==='ent'){ if(box) penKey(box,'Enter'); return; }
+      if(a==='pen'){ if(box){ if(ltPenIn&&ltTarget===box) penOff(); else penOn(box); } return; }
       const via=cls=>{ const t=box&&box.tb&&box.tb.querySelector(cls); if(t) t.click(); }; // reuse the box's own edit / render / font / crop / ratio logic
       if(a==='rec') lsRecognize(); else if(a==='copy') lsCopy(); else if(a==='cut') lsCut(); else if(a==='del') lsDelete();
       else if(a==='rot'){ if(box){ if(box.endCrop) box.endCrop(true); boxRotToggle(box); b.classList.toggle('on',!!box.rotOff); } else lsRotToggle(); }
@@ -4983,7 +5090,7 @@ function lsShowBox(dx=0,dy=0){
     });
     d.appendChild(bar); pg.el.appendChild(d); pg.lsBox=d;
   }
-  const b=s.box, d=pg.lsBox, bar=d.firstChild;
+  const b=s.box, d=pg.lsBox, bar=d.firstChild, wasHidden=d.style.display!=='block';
   d.classList.toggle('single',s.kind==='single');
   for(const bx of s.boxes) bx.el.classList.toggle('sel-hl',s.kind!=='single');
   const sig=sbSig(s); if(bar.dataset.sig!==sig){ bar.dataset.sig=sig; sbBuild(bar,s); }
@@ -4991,14 +5098,28 @@ function lsShowBox(dx=0,dy=0){
   d.style.left=((b.x0+dx)/pg.w*100)+'%'; d.style.top=((b.y0+dy)/pg.h*100)+'%';
   d.style.width=((b.x1-b.x0)/pg.w*100)+'%'; d.style.height=((b.y1-b.y0)/pg.h*100)+'%';
   d.style.display='block';
-  // keep the bar on the page: above the selection, or below / inside when there is no room
-  const pr=pg.el.getBoundingClientRect(), k=pr.height/pg.h, bw=bar.offsetWidth||230, bh=bar.offsetHeight||40;
-  const left=(b.x0+dx)*k, top=(b.y0+dy)*k, w=(b.x1-b.x0)*k, h=(b.y1-b.y0)*k;
-  let bx=left+w/2-bw/2; bx=Math.max(6,Math.min(pr.width-bw-6,bx));
-  bar.style.left=(bx-left)+'px';
-  if(top-bh-12>=0){ bar.style.top=(-bh-8)+'px'; bar.style.bottom='auto'; }
-  else if(top+h+bh+12<=pr.height){ bar.style.top=(h+8)+'px'; bar.style.bottom='auto'; }
-  else{ bar.style.top=Math.max(6,h-bh-8)+'px'; bar.style.bottom='auto'; }
+  sbPlace(bar,wasHidden); // bottom centre, or the left edge while the formatting panel is open
+}
+function sbDockLeft(){ // formatting open -> the bar moves to the left edge
+  const s=lsSel; if(!s||s.kind!=='single') return false;
+  const b=s.boxes[0]; if(!b||b.kind!=='text') return false;
+  if(b.engine==='v2') return !!(b.fmt&&b.editor);
+  return !!(b.pop&&b.pop.classList.contains('open'));
+}
+function sbPlace(bar,instant){
+  if(!window.__sbVV){ window.__sbVV=1; const f=()=>{ const s=lsSel; if(s&&s.pg.lsBox&&s.pg.lsBox.style.display==='block') lsShowBox(); }; window.addEventListener('resize',f); if(window.visualViewport) visualViewport.addEventListener('resize',f); }
+  const left=sbDockLeft(), bx=lsSel&&lsSel.kind==='single'?lsSel.boxes[0]:null;
+  const vv=window.visualViewport, vw=vv?vv.width:innerWidth, vh=vv?vv.height:innerHeight, ot=vv?vv.offsetTop:0, ol=vv?vv.offsetLeft:0;
+  const tbEl=document.getElementById('bar'), topEdge=Math.round((tbEl?tbEl.getBoundingClientRect().bottom:66)+10);
+  const go=()=>{
+    bar.classList.toggle('dockL',left); bar.classList.toggle('v1',!!(bx&&bx.engine!=='v2'));
+    bar.style.maxHeight=left?Math.max(120,vh-topEdge-14)+'px':'';
+    const bw=bar.offsetWidth||230, bh=bar.offsetHeight||40;
+    if(left){ bar.style.left=(ol+8)+'px'; bar.style.top=topEdge+'px'; }
+    else{ bar.style.left=Math.max(ol+6,ol+(vw-bw)/2)+'px'; bar.style.top=Math.max(topEdge,ot+vh-bh-14)+'px'; }
+  };
+  if(instant){ bar.style.transition='none'; go(); void bar.offsetWidth; bar.style.transition=''; } else go();
+  if(typeof V2TB!=='undefined') V2TB.place(); // the formatting panel follows the bar
 }
 function clearLassoSel(){
   document.querySelectorAll('.fPop.open').forEach(q=>q.classList.remove('open'));
@@ -6244,12 +6365,19 @@ const V2TB=(function(){
     if(!msRanges(e).length){ e.chain().focus()['toggle'+Name]().run(); return; }
     const on=allMarked(name); runAll(c=>on?c['unset'+Name]():c['set'+Name]());
   }
-  function place(){ // sit above the on-screen keyboard and the bottom safe area
+  function place(){ // docked at the left, on the right side of the selection bar (vertical panel)
     if(!el||el.style.display==='none') return;
-    const vv=window.visualViewport, kb=vv?Math.max(0,window.innerHeight-(vv.height+vv.offsetTop)):0;
-    el.style.bottom=(kb+10)+'px';
-    const top=kb+10+el.offsetHeight+8; pal.style.bottom=top+'px'; fpop.style.bottom=top+'px'; if(!bpal.dataset.moved) bpal.style.bottom=top+'px';
-    const fb=fontBtn; fpop.style.left=Math.max(8,Math.min(innerWidth-(fpop.offsetWidth||150)-8,(fb?fb.getBoundingClientRect().left:8)))+'px'; fpop.style.transform='none';
+    const vv=window.visualViewport, vh=vv?vv.height:innerHeight, ol=vv?vv.offsetLeft:0;
+    const tbEl=document.getElementById('bar'), top=Math.round((tbEl?tbEl.getBoundingClientRect().bottom:66)+10);
+    const sb=document.querySelector('.sel-bar.dockL');
+    const left=sb?Math.round((parseFloat(sb.style.left)||ol+8)+sb.offsetWidth+8):ol+8;
+    el.classList.add('dockL');
+    el.style.left=left+'px'; el.style.top=top+'px'; el.style.bottom='auto'; el.style.maxHeight=Math.max(120,vh-top-14)+'px';
+    const px=(left+el.offsetWidth+8)+'px';
+    pal.style.left=px; pal.style.transform='none'; pal.style.bottom='auto'; pal.style.top=top+'px';
+    fpop.style.left=px; fpop.style.transform='none'; fpop.style.bottom='auto';
+    const fb=fontBtn, ft=fb?fb.getBoundingClientRect().top:top; fpop.style.top=Math.max(top,Math.min(ft,vh-(fpop.offsetHeight||200)-14))+'px';
+    if(!bpal.dataset.moved){ bpal.style.left=px; bpal.style.transform='none'; bpal.style.bottom='auto'; bpal.style.top=top+'px'; }
   }
   function askCancel(on){ const c=bpal&&bpal.querySelector('.cf'); if(c) c.style.display=on?'flex':'none'; if(bpal) bpal.classList.toggle('cfm',!!on); }
   function commit(){ askCancel(false); if(box&&dirty){ try{ asMark(box.page,true); }catch(_){} } dirty=false; setMode('txt'); }
@@ -6323,8 +6451,8 @@ const V2TB=(function(){
     if(raw){ pal.style.display='none'; fpop.style.display='none'; }
   }
   function show(b){ if(!el) build(); if(box!==b){ multiOn=false; mode='txt'; el.dataset.m='txt'; fin.dataset.c='done'; } box=b; el.style.display='flex'; sync(); place(); }
-  function hide(){ askCancel(false); if(box&&dirty){ try{ asMark(box.page,true); }catch(_){} } dirty=false; box=null; multiOn=false; mode='txt'; if(!el) return; el.dataset.m='txt'; fin.dataset.c='done'; el.style.display='none'; pal.style.display='none'; fpop.style.display='none'; bpal.style.display='none'; }
-  return {show,hide,sync,attach};
+  function hide(){ askCancel(false); if(box&&dirty){ try{ asMark(box.page,true); }catch(_){} } dirty=false; box=null; multiOn=false; mode='txt'; if(!el) return; el.dataset.m='txt'; fin.dataset.c='done'; el.style.display='none'; try{ if(lsSel&&lsSel.pg.lsBox&&lsSel.pg.lsBox.style.display==='block') sbPlace(lsSel.pg.lsBox.firstChild); }catch(_){} pal.style.display='none'; fpop.style.display='none'; bpal.style.display='none'; }
+  return {show,hide,sync,attach,place};
 })();
 
 /* s6i: PDF export of new-engine (v2) boxes. The box is laid out off-screen by the browser (same CSS as the live box, --z:1),
@@ -10098,6 +10226,7 @@ setMode('pen');
   }
 
   /* ---- hooks (only the entry points; the ink engine itself is untouched) ---- */
+  window.__penEnsure=function(cb){ ensure('lp',cb); }; // text-pen button of a TipTap box
   try{
     var t=document.getElementById('txtAddV2'), o1=t&&t.onclick; // Text tool -> "Add TipTap box"
     if(o1) t.onclick=function(ev){ ev.stopPropagation(); var m=document.getElementById('txtMenu'); if(m) m.style.display='none'; ensure('tip',function(){ o1.call(t,ev); }); };

@@ -153,6 +153,7 @@ public class MainActivity extends Activity {
     }
 
     private DigitalInkRecognizer recognizer;
+    private boolean langPackOk = false; // set once the language pack is known to be on the phone: later recognitions skip the check
     private DigitalInkRecognitionModel inkModel;
 
     private void sendResult(final String text) {
@@ -172,12 +173,12 @@ public class MainActivity extends Activity {
     private interface Cb { void done(String text, boolean ok); }
 
     private void recognizeInk(final String json) {
-        recognize(json, (t, ok) -> sendResult(t));
+        recognize(json, false, (t, ok) -> sendResult(t));
     }
 
     // payload: {pre:"text before", lines:[{strokes:[[{x,y,t}]], w, h}]} — each line is recognised on its own, with the
     // text recognised so far as context, and the results are joined with "\n".
-    private void recognize(final String json, final Cb cb) {
+    private void recognize(final String json, final boolean quiet, final Cb cb) { // quiet = no toasts / status messages (live handwriting)
         try {
             final JSONObject payload = new JSONObject(json);
             final JSONArray lines = payload.getJSONArray("lines");
@@ -191,14 +192,16 @@ public class MainActivity extends Activity {
             final DigitalInkRecognizer rec = recognizer;
             final RemoteModelManager mm = RemoteModelManager.getInstance();
             final DigitalInkRecognitionModel model = inkModel;
-            status("Checking language pack…");
+            if (langPackOk) { runLines(rec, lines, 0, pre, new StringBuilder(), quiet, cb); return; } // already checked: go straight to recognising
+            if (!quiet) status("Checking language pack…");
             mm.isModelDownloaded(model).addOnSuccessListener(isDl -> {
                 if (isDl) {
-                    runLines(rec, lines, 0, pre, new StringBuilder(), cb);
+                    langPackOk = true;
+                    runLines(rec, lines, 0, pre, new StringBuilder(), quiet, cb);
                 } else {
-                    status("Downloading English language pack… needs internet, please wait");
+                    if (!quiet) status("Downloading English language pack… needs internet, please wait");
                     mm.download(model, new DownloadConditions.Builder().build())
-                        .addOnSuccessListener(v -> { status("Language pack downloaded"); runLines(rec, lines, 0, pre, new StringBuilder(), cb); })
+                        .addOnSuccessListener(v -> { langPackOk = true; if (!quiet) status("Language pack downloaded"); runLines(rec, lines, 0, pre, new StringBuilder(), quiet, cb); })
                         .addOnFailureListener(e -> cb.done("Language pack download failed: " + e.getMessage() + " (check internet / Google Play services)", false));
                 }
             }).addOnFailureListener(e -> cb.done("ML Kit error: " + e.getMessage() + " (needs Google Play services)", false));
@@ -207,7 +210,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void runLines(final DigitalInkRecognizer rec, final JSONArray lines, final int idx, final String pre, final StringBuilder acc, final Cb cb) {
+    private void runLines(final DigitalInkRecognizer rec, final JSONArray lines, final int idx, final String pre, final StringBuilder acc, final boolean quiet, final Cb cb) {
         if (idx >= lines.length()) { cb.done(acc.toString(), true); return; }
         try {
             JSONObject line = lines.getJSONObject(idx);
@@ -228,13 +231,13 @@ public class MainActivity extends Activity {
                 .setPreContext(ctx)
                 .setWritingArea(new WritingArea((float) line.getDouble("w"), (float) line.getDouble("h")))
                 .build();
-            status(lines.length() > 1 ? "Recognizing line " + (idx + 1) + " of " + lines.length() + "…" : "Recognizing…");
+            if (!quiet) status(lines.length() > 1 ? "Recognizing line " + (idx + 1) + " of " + lines.length() + "…" : "Recognizing…");
             rec.recognize(ib.build(), rc)
                 .addOnSuccessListener(r -> {
                     String t = r.getCandidates().isEmpty() ? "" : r.getCandidates().get(0).getText();
                     if (acc.length() > 0 && !t.isEmpty()) acc.append("\n");
                     acc.append(t);
-                    runLines(rec, lines, idx + 1, pre, acc, cb);
+                    runLines(rec, lines, idx + 1, pre, acc, quiet, cb);
                 })
                 .addOnFailureListener(e -> cb.done("Recognition failed: " + e.getMessage(), false));
         } catch (Exception e) {
@@ -255,7 +258,7 @@ public class MainActivity extends Activity {
         try {
             ensureInkObjects();
             RemoteModelManager.getInstance().isModelDownloaded(inkModel)
-                .addOnSuccessListener(isDl -> lpCheck(isDl))
+                .addOnSuccessListener(isDl -> { if (isDl) langPackOk = true; lpCheck(isDl); })
                 .addOnFailureListener(e -> lpCheck(true)); // cannot check: let the normal recognition flow report its own error
         } catch (Exception e) {
             lpCheck(true);
@@ -273,11 +276,11 @@ public class MainActivity extends Activity {
             final RemoteModelManager mm = RemoteModelManager.getInstance();
             final DigitalInkRecognitionModel model = inkModel;
             mm.isModelDownloaded(model).addOnSuccessListener(isDl -> {
-                if (isDl) { lpReady(true, "already downloaded"); }
+                if (isDl) { langPackOk = true; lpReady(true, "already downloaded"); }
                 else if (!online) { lpReady(false, "offline"); }
                 else {
                     mm.download(model, new DownloadConditions.Builder().build())
-                        .addOnSuccessListener(v -> lpReady(true, "downloaded"))
+                        .addOnSuccessListener(v -> { langPackOk = true; lpReady(true, "downloaded"); })
                         .addOnFailureListener(e -> lpReady(false, "download failed: " + e.getMessage()));
                 }
             }).addOnFailureListener(e -> lpReady(false, "check failed: " + e.getMessage()));
@@ -303,7 +306,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void recognizeLive(final int id, final String json) {
-            runOnUiThread(() -> recognize(json, (t, ok) -> runOnUiThread(() ->
+            runOnUiThread(() -> recognize(json, true, (t, ok) -> runOnUiThread(() ->
                 webView.evaluateJavascript("window.__liveResult&&window.__liveResult(" + id + "," + JSONObject.quote(t) + "," + ok + ")", null))));
         }
 
