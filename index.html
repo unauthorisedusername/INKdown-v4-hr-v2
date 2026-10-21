@@ -1483,18 +1483,18 @@ body{height:100dvh}
 @media (prefers-reduced-motion:reduce){.spo,.spc,#spl.rdy .spc .spg::before{animation:none}}
 </style>
 <script>
-(function(){var T=7,n=0,last='Starting';
-function render(){var b=document.getElementById('spBar');if(!b)return;var p=Math.min(100,Math.round(n/T*100));b.style.width=p+'%';document.getElementById('spPct').textContent=p+'%';document.getElementById('spLbl').textContent=n>=T?'All libraries loaded':'Loaded '+last+' ('+n+'/'+T+')'}
+(function(){var T=9,n=0,last='Starting',pend=['text engine','handwriting language pack'];
+function render(){var b=document.getElementById('spBar');if(!b)return;var p=Math.min(100,Math.round(n/T*100));b.style.width=p+'%';document.getElementById('spPct').textContent=p+'%';document.getElementById('spLbl').textContent=n>=T?'All libraries loaded':(pend.length&&n>=T-pend.length?'Downloading '+pend.join(' & ')+'…':'Loaded '+last+' ('+n+'/'+T+')')}
 var tm,iv;
 function leave(){var s=document.getElementById('spl');if(!s||s.dataset.h)return;s.dataset.h=1;clearTimeout(tm);clearInterval(iv);s.classList.add('out');setTimeout(function(){s.remove()},550)}
 function hide(){var s=document.getElementById('spl');if(!s||s.dataset.r)return;s.dataset.r=1;n=T;render();s.classList.add('rdy');
   tm=setTimeout(leave,5000)}
 document.addEventListener('click',function(e){var t=e.target;if(t&&t.closest&&t.closest('#spGo'))leave()},true);
 function chk(){if(n>=T)hide()}
-window.__ld=function(name){n++;last=name;render();chk()};
+window.__ld=function(name){var i=pend.indexOf(name);if(i>=0)pend.splice(i,1);n++;last=name;render();chk()};
 window.__ldr=render;
 window.addEventListener('load',chk);
-setTimeout(hide,6000);setTimeout(leave,12000);
+setTimeout(hide,120000);setTimeout(leave,130000); /* safety only: the text engine + language pack can take a while on the very first launch */
 })();
 </script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" onload="__ld('KaTeX styles')" onerror="__ld('KaTeX styles')">
@@ -10004,6 +10004,109 @@ setMode('pen');
   window.addEventListener('blur',hide);
   ['erSize','arSize'].forEach(id=>$(id).addEventListener('input',()=>{ lastD=0; if(vis&&!raf) raf=requestAnimationFrame(paint); }));
   wrap.addEventListener('wheel',()=>{ lastD=0; if(vis&&!raf) raf=requestAnimationFrame(paint); },{passive:true});
+})();
+</script>
+<script>
+/* LIBRARY CHECK — (1) landing prefetch: download the TipTap text engine and the handwriting language pack while the landing
+   page is shown. (2) when a TipTap box / Live text / lasso-recognise is used and a library is still missing, ask first
+   ("Download?"), then show the download progress in the same pop-up. Nothing else in the app is changed. */
+(function(){
+  var L=window.__lib={lpBusy:false,lpOK:false}, lpWait=[], chkWait=[];
+  var d1=0,d2=0;
+  function done1(){ if(d1) return; d1=1; window.__ld&&__ld('text engine'); }
+  function done2(){ if(d2) return; d2=1; window.__ld&&__ld('handwriting language pack'); }
+  var hasApp=function(){ return !!(window.Android&&Android.prefetchLangPack&&Android.checkLangPack); };
+
+  /* ---- handwriting language pack (native, through the Android bridge) ---- */
+  window.__lpReady=function(ok,msg){
+    L.lpBusy=false; L.lpOK=!!ok; if(msg) console.log('[lang pack]',msg);
+    done2(); var w=lpWait.splice(0); w.forEach(function(f){ try{ f(!!ok,msg); }catch(e){} });
+  };
+  window.__lpCheck=function(has){ var w=chkWait.splice(0); w.forEach(function(f){ try{ f(!!has); }catch(e){} }); };
+  function lpCheck(cb){ // is the language pack on the phone?
+    if(!hasApp()||L.lpOK) return cb(true);
+    chkWait.push(cb);
+    try{ Android.checkLangPack(); }catch(e){ __lpCheck(true); }
+  }
+  function lpDownload(cb){ // start (or join) the download
+    if(!hasApp()) return cb(true);
+    lpWait.push(cb);
+    if(L.lpBusy) return;
+    L.lpBusy=true;
+    try{ Android.prefetchLangPack(navigator.onLine!==false); }catch(e){ __lpReady(false,'error'); }
+  }
+
+  /* landing page: start both downloads now */
+  try{ if(typeof TE!=='undefined'&&TE.load) TE.load().then(done1,done1); else done1(); }catch(e){ done1(); }
+  if(hasApp()){ lpDownload(function(){}); } else done2();
+
+  /* ---- pop-up ---- */
+  var st=document.createElement('style');
+  st.textContent='#libDlg{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);font-family:var(--font,system-ui,sans-serif)}'
+   +'#libDlg .ldc{width:min(320px,calc(100vw - 48px));box-sizing:border-box;padding:22px;border-radius:var(--r3,16px);background:var(--gl-pop,#1c1f2c);color:var(--fg,#e5e7eb);border:1px solid var(--gl-bd,rgba(255,255,255,.16));box-shadow:0 12px 40px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:12px}'
+   +'#libDlg .ldt{font:600 16px/1.3 var(--font,system-ui,sans-serif);display:flex;align-items:center;gap:10px}'
+   +'#libDlg .ldm{font:400 13px/1.45 var(--font,system-ui,sans-serif);opacity:.8}'
+   +'#libDlg .ldr{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}'
+   +'#libDlg .ldr button{padding:10px 16px;border-radius:var(--r2,12px);border:1px solid var(--gl-bd,rgba(255,255,255,.16));background:transparent;color:inherit;font:600 13px/1 var(--font,system-ui,sans-serif)}'
+   +'#libDlg .ldr button.pri{background:var(--ac,#60a5fa);border-color:var(--ac,#60a5fa);color:#fff}'
+   +'#libDlg .ldsp{width:18px;height:18px;flex:none;border-radius:50%;border:3px solid rgba(127,127,127,.35);border-top-color:var(--ac,#60a5fa);animation:ldSpin .8s linear infinite}'
+   +'#libDlg .ldok{width:18px;height:18px;flex:none;border-radius:50%;background:#16a34a;color:#fff;font:700 12px/18px sans-serif;text-align:center}'
+   +'@keyframes ldSpin{to{transform:rotate(360deg)}}';
+  document.head.appendChild(st);
+
+  var INFO={
+    tip:{name:'Text engine (TipTap)', ask:'The TipTap text engine is not downloaded yet. Download it now? Internet is needed.', busy:'Downloading the TipTap text engine… please wait.', ok:'The TipTap text engine is ready.'},
+    lp: {name:'Handwriting language pack', ask:'The handwriting recognition language pack (English) is not downloaded yet. Download it now? Internet is needed.', busy:'Downloading the handwriting language pack… please wait.', ok:'The handwriting language pack is ready.'}
+  };
+  function run(kind,cb){ // cb(ok,msg)
+    if(kind==='tip'){ TE.load().then(function(){ cb(true); },function(){ cb(false,'Download failed. Check your internet connection and try again.'); }); }
+    else{ lpDownload(function(ok,msg){ cb(ok,ok?'':(msg==='offline'?'No internet connection. Connect and try again.':'Download failed. Check your internet connection / Google Play services and try again.')); }); }
+  }
+  function show(kind,busy,cb){
+    var I=INFO[kind], o=document.createElement('div'); o.id='libDlg';
+    var card=document.createElement('div'); card.className='ldc'; o.appendChild(card);
+    ['pointerdown','pointerup','click','touchstart'].forEach(function(t){ o.addEventListener(t,function(e){ e.stopPropagation(); },true); });
+    function set(title,msg,state,btns){
+      card.innerHTML='';
+      var h=document.createElement('div'); h.className='ldt';
+      if(state==='spin'){ var s=document.createElement('i'); s.className='ldsp'; h.appendChild(s); }
+      if(state==='ok'){ var k=document.createElement('i'); k.className='ldok'; k.textContent='✓'; h.appendChild(k); }
+      h.appendChild(document.createTextNode(title)); card.appendChild(h);
+      var m=document.createElement('div'); m.className='ldm'; m.textContent=msg; card.appendChild(m);
+      var r=document.createElement('div'); r.className='ldr'; card.appendChild(r);
+      btns.forEach(function(b){ var x=document.createElement('button'); x.type='button'; x.textContent=b[0]; if(b[2]) x.className='pri'; x.onclick=b[1]; r.appendChild(x); });
+    }
+    function close(){ if(o.parentNode) o.parentNode.removeChild(o); }
+    function start(){
+      set('Downloading '+I.name,I.busy,'spin',[['Hide',close]]);
+      run(kind,function(ok,msg){
+        if(!o.parentNode) { if(ok) cb(); return; } // hidden meanwhile: still continue the action when it finished
+        if(ok){ set(I.name,I.ok,'ok',[]); setTimeout(function(){ close(); cb(); },700); }
+        else set('Download failed',msg,'',[['Close',close],['Retry',start,1]]);
+      });
+    }
+    document.body.appendChild(o);
+    if(busy) start(); else set('Download '+I.name+'?',I.ask,'',[['Not now',close],['Download',start,1]]);
+  }
+  function ensure(kind,cb){ // runs cb now when the library is there; otherwise asks / downloads first
+    if(document.getElementById('libDlg')) return;
+    if(kind==='tip'){
+      if(typeof TE==='undefined'||TE.ready) return cb();
+      return show('tip',!!TE._p,cb);
+    }
+    lpCheck(function(has){ if(has) cb(); else show('lp',L.lpBusy,cb); });
+  }
+
+  /* ---- hooks (only the entry points; the ink engine itself is untouched) ---- */
+  try{
+    var t=document.getElementById('txtAddV2'), o1=t&&t.onclick; // Text tool -> "Add TipTap box"
+    if(o1) t.onclick=function(ev){ ev.stopPropagation(); var m=document.getElementById('txtMenu'); if(m) m.style.display='none'; ensure('tip',function(){ o1.call(t,ev); }); };
+    var lv=document.getElementById('mLive'), o2=lv&&lv.onclick; // Live text (handwriting -> TipTap text)
+    if(o2) lv.onclick=function(ev){ if(typeof liveOn!=='undefined'&&liveOn) return o2.call(lv,ev); ensure('lp',function(){ ensure('tip',function(){ o2.call(lv,ev); }); }); };
+    if(typeof window.lsRecognize==='function'){ // lasso -> recognise handwriting button
+      var o3=window.lsRecognize; window.lsRecognize=function(){ ensure('lp',function(){ o3(); }); };
+    }
+  }catch(e){ console.error('[lib check] hook failed',e); }
 })();
 </script>
 </body>

@@ -242,7 +242,65 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void ensureInkObjects() {
+        if (recognizer == null) {
+            DigitalInkRecognitionModelIdentifier id = DigitalInkRecognitionModelIdentifier.fromLanguageTag("en-US");
+            inkModel = DigitalInkRecognitionModel.builder(id).build();
+            recognizer = DigitalInkRecognition.getClient(DigitalInkRecognizerOptions.builder(inkModel).build());
+        }
+    }
+
+    // Is the handwriting language pack already on the phone? Answer goes to window.__lpCheck(true/false).
+    private void checkLangPack() {
+        try {
+            ensureInkObjects();
+            RemoteModelManager.getInstance().isModelDownloaded(inkModel)
+                .addOnSuccessListener(isDl -> lpCheck(isDl))
+                .addOnFailureListener(e -> lpCheck(true)); // cannot check: let the normal recognition flow report its own error
+        } catch (Exception e) {
+            lpCheck(true);
+        }
+    }
+
+    private void lpCheck(final boolean has) {
+        runOnUiThread(() -> webView.evaluateJavascript("window.__lpCheck&&window.__lpCheck(" + has + ")", null));
+    }
+
+    // Download the handwriting language pack (landing page + on-demand pop-up), then tell the page (window.__lpReady).
+    private void prefetchLangPack(final boolean online) {
+        try {
+            ensureInkObjects();
+            final RemoteModelManager mm = RemoteModelManager.getInstance();
+            final DigitalInkRecognitionModel model = inkModel;
+            mm.isModelDownloaded(model).addOnSuccessListener(isDl -> {
+                if (isDl) { lpReady(true, "already downloaded"); }
+                else if (!online) { lpReady(false, "offline"); }
+                else {
+                    mm.download(model, new DownloadConditions.Builder().build())
+                        .addOnSuccessListener(v -> lpReady(true, "downloaded"))
+                        .addOnFailureListener(e -> lpReady(false, "download failed: " + e.getMessage()));
+                }
+            }).addOnFailureListener(e -> lpReady(false, "check failed: " + e.getMessage()));
+        } catch (Exception e) {
+            lpReady(false, "error: " + e.getMessage());
+        }
+    }
+
+    private void lpReady(final boolean ok, final String msg) {
+        runOnUiThread(() -> webView.evaluateJavascript("window.__lpReady&&window.__lpReady(" + ok + "," + JSONObject.quote(msg) + ")", null));
+    }
+
     private class Bridge {
+        @JavascriptInterface
+        public void checkLangPack() {
+            runOnUiThread(() -> MainActivity.this.checkLangPack());
+        }
+
+        @JavascriptInterface
+        public void prefetchLangPack(final boolean online) {
+            runOnUiThread(() -> MainActivity.this.prefetchLangPack(online));
+        }
+
         @JavascriptInterface
         public void recognizeLive(final int id, final String json) {
             runOnUiThread(() -> recognize(json, (t, ok) -> runOnUiThread(() ->
