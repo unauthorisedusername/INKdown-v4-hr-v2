@@ -88,6 +88,9 @@ body{background:var(--bg);color:var(--fg);font:14px system-ui,-apple-system,Sego
 #wrap{flex:1;position:relative;overflow:auto;background:var(--bg);touch-action:none;overscroll-behavior:contain}
 .page{position:relative;width:calc(var(--pw,794)*1px*var(--z,1));height:calc(var(--ph,1123)*1px*var(--z,1));margin:20px auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.25)}
 canvas{touch-action:none;user-select:none}
+body.inking *{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+body.psave .page{box-shadow:none}
+body.psave.inking *{transition:none!important;animation:none!important}
 
 /* ============================================================
    SECTION: TOOLBAR (icon buttons, groups, sliders, swatches, status, tooltip)
@@ -2704,8 +2707,12 @@ const A4W=794, A4H=1123; // A4 at 96 dpi — size of blank pages. Every page has
 const wrap=$('wrap');
 // ONE shared live-stroke canvas; it is moved into whichever page the current gesture started on.
 const live=document.createElement('canvas'); live.id='live';
-const lctx=live.getContext('2d'); // s6zc: desynchronized removed (black page in Brave)
-let dpr=window.devicePixelRatio||1;
+const lctx=live.getContext('2d', window.Android?{desynchronized:true}:undefined); // s7a: low-latency canvas only inside the APK (Brave black page)
+let psave=/psave/.test(location.hash); // s7b: battery-saver mode (set by the APK, or open with #psave to test)
+if(psave) document.body.classList.add('psave');
+const liveDpr=()=>psave?1:(window.devicePixelRatio||1);
+let dpr=window.devicePixelRatio||1, ldpr=liveDpr();
+window.__powerSave=on=>{ psave=!!on; document.body.classList.toggle('psave',psave); sizeLive(); };
 // The live canvas only covers the VISIBLE scroll area (fixed to the viewport), so its memory is
 // constant at any zoom. liveXform() maps page units -> screen pixels, so the stroke you're
 // drawing is sharp at every zoom level.
@@ -2716,11 +2723,11 @@ const lp=document.createElement('canvas'); lp.id='livep'; lp.style.cssText='posi
 const lpx=lp.getContext('2d');
 document.body.appendChild(lp);
 function sizeLive(){
-  dpr=window.devicePixelRatio||1;
+  dpr=window.devicePixelRatio||1; ldpr=liveDpr();
   const r=wrap.getBoundingClientRect();
   live.style.left=r.left+'px'; live.style.top=r.top+'px';
   live.style.width=r.width+'px'; live.style.height=r.height+'px';
-  live.width=Math.max(1,Math.round(r.width*dpr)); live.height=Math.max(1,Math.round(r.height*dpr));
+  live.width=Math.max(1,Math.round(r.width*ldpr)); live.height=Math.max(1,Math.round(r.height*ldpr));
   lp.style.left=r.left+'px'; lp.style.top=r.top+'px'; lp.style.width=r.width+'px'; lp.style.height=r.height+'px';
   lp.width=live.width; lp.height=live.height;
   liveSaved=false; // resizing resets the canvas state
@@ -2769,7 +2776,7 @@ function clearLive(){
 function liveXform(){
   const r=gp.el.getBoundingClientRect(), L=live.getBoundingClientRect(), k=r.width/gp.w;
   lctx.save(); liveSaved=true;
-  lctx.setTransform(dpr*k,0,0,dpr*k,dpr*(r.left-L.left),dpr*(r.top-L.top));
+  lctx.setTransform(ldpr*k,0,0,ldpr*k,ldpr*(r.left-L.left),ldpr*(r.top-L.top));
   lctx.beginPath(); lctx.rect(0,0,gp.w,gp.h); lctx.clip();
 }
 
@@ -3728,7 +3735,7 @@ function laserFrame(){
     const a=age<=0?1:1-age/LASER_FADE_MS;
     const r=s.pg.el.getBoundingClientRect(), k=r.width/s.pg.w;
     lctx.save();
-    lctx.setTransform(dpr*k,0,0,dpr*k,dpr*(r.left-L.left),dpr*(r.top-L.top));
+    lctx.setTransform(ldpr*k,0,0,ldpr*k,ldpr*(r.left-L.left),ldpr*(r.top-L.top));
     lctx.beginPath(); lctx.rect(0,0,s.pg.w,s.pg.h); lctx.clip();
     lctx.globalAlpha=Math.max(0,a); lctx.lineCap='round'; lctx.lineJoin='round';
     // 4 layers, outside -> inside: solid red body, bright red, pink, white core (lit from inside, no outer glow)
@@ -4416,7 +4423,8 @@ const IK_NIB=-Math.PI/4, IK_DMIN=0.12;
 const ikP=(w,hw)=>Math.pow(Math.max(0,Math.min(1,w/hw)),1.25);
 function ikBegin(e,q,cal){
   const hw=+$('mx').value, r=gp.el.getBoundingClientRect(), sp=e.pointerType==='mouse'?1:(e.pressure||0.5);
-  ik={hw,zs:r.width/gp.w,rl:r.left,rt:r.top,ll:live.getBoundingClientRect().left,lt:live.getBoundingClientRect().top,rw:r.width,rh:r.height,sp,cal:!!cal,df:cal?0.6:1,sx:q.x,sy:q.y,lx:q.x,ly:q.y,mx:q.x,my:q.y,rx:q.x,ry:q.y,moved:false};
+  ik={hw,zs:r.width/gp.w,rl:r.left,rt:r.top,ll:live.getBoundingClientRect().left,lt:live.getBoundingClientRect().top,rw:r.width,rh:r.height,sp,cal:!!cal,df:cal?0.6:1,sx:q.x,sy:q.y,lx:q.x,ly:q.y,mx:q.x,my:q.y,rx:q.x,ry:q.y,moved:false,t:e.timeStamp};
+  document.body.classList.add('inking');
   cur={color:curColor,maxW:hw,minW:cal?0:hw*0.15,ink:1,pts:[{x:q.x,y:q.y,p:cal?ikP(ikK(sp)*0.6*hw,hw):Math.pow(sp,1.25)}]};
   clearLive(); liveXform();
   lctx.strokeStyle=curColor; lctx.fillStyle=curColor; lctx.lineCap='round'; lctx.lineJoin='round';
@@ -4426,7 +4434,8 @@ function ikMove(evs){
   for(const ev of evs){
     const ps=ev.pointerType==='mouse'?1:(ev.pressure||ik.sp);
     ik.sp+=(ps-ik.sp)*IK_PSMOOTH; const k=ikK(ik.sp), q={x:(ev.clientX-ik.rl)*gp.w/ik.rw,y:(ev.clientY-ik.rt)*gp.h/ik.rh};
-    const d=Math.hypot(q.x-ik.sx,q.y-ik.sy)*ik.zs, a=Math.min(1,IK_SMOOTH_MIN+d/IK_SMOOTH_SPEED);
+    const d=Math.hypot(q.x-ik.sx,q.y-ik.sy)*ik.zs, dt=Math.max(1,Math.min(64,ev.timeStamp-ik.t)); ik.t=ev.timeStamp;
+    const a=1-Math.pow(1-Math.min(1,IK_SMOOTH_MIN+d/IK_SMOOTH_SPEED),dt/8); // s7a: time-based, same feel at any event rate
     const ox=ik.sx, oy=ik.sy;
     ik.sx+=(q.x-ik.sx)*a; ik.sy+=(q.y-ik.sy)*a; ik.rx=q.x; ik.ry=q.y;
     if(ik.cal&&Math.hypot(ik.sx-ox,ik.sy-oy)*ik.zs>0.4){ const f=IK_DMIN+(1-IK_DMIN)*Math.abs(Math.sin(Math.atan2(ik.sy-oy,ik.sx-ox)-IK_NIB)); ik.df+=(f-ik.df)*0.35; }
@@ -4439,23 +4448,30 @@ function ikMove(evs){
 /* s6zb: low-latency input. pointerrawupdate feeds the ink pen straight away (pointermove then skips it);
    getPredictedEvents() draws a short throwaway tail on the #livep overlay. */
 const HAS_RAW='onpointerrawupdate' in window;
-function ikPredClear(){ lpx.setTransform(1,0,0,1,0,0); lpx.clearRect(0,0,lp.width,lp.height); }
+let lpDirty=null;
+function ikPredClear(){ if(!lpDirty) return; lpx.setTransform(1,0,0,1,0,0); lpx.clearRect(lpDirty.x,lpDirty.y,lpDirty.w,lpDirty.h); lpDirty=null; }
 function ikPred(e){
   ikPredClear();
   if(!ik||!e.getPredictedEvents) return;
   const pe=e.getPredictedEvents(); if(!pe.length) return;
-  lpx.setTransform(dpr*ik.zs,0,0,dpr*ik.zs,dpr*(ik.rl-ik.ll),dpr*(ik.rt-ik.lt));
+  lpx.setTransform(ldpr*ik.zs,0,0,ldpr*ik.zs,ldpr*(ik.rl-ik.ll),ldpr*(ik.rt-ik.lt));
   lpx.strokeStyle=curColor; lpx.lineCap='round'; lpx.lineJoin='round'; lpx.lineWidth=ik.hw*ikK(ik.sp)*ik.df;
   lpx.beginPath(); lpx.moveTo(ik.lx,ik.ly);
-  for(const p of pe) lpx.lineTo((p.clientX-ik.rl)*gp.w/ik.rw,(p.clientY-ik.rt)*gp.h/ik.rh);
+  const ox=ik.rl-ik.ll, oy=ik.rt-ik.lt;
+  let x0=ox+ik.lx*ik.zs, y0=oy+ik.ly*ik.zs, x1=x0, y1=y0;
+  for(const p of pe){ lpx.lineTo((p.clientX-ik.rl)*gp.w/ik.rw,(p.clientY-ik.rt)*gp.h/ik.rh); const px=p.clientX-ik.ll, py=p.clientY-ik.lt; if(px<x0)x0=px; if(px>x1)x1=px; if(py<y0)y0=py; if(py>y1)y1=py; }
   lpx.stroke();
+  const pad=(ik.hw*ik.zs)+4; lpDirty={x:Math.floor((x0-pad)*ldpr),y:Math.floor((y0-pad)*ldpr),w:Math.ceil((x1-x0+2*pad)*ldpr),h:Math.ceil((y1-y0+2*pad)*ldpr)};
 }
+window.addEventListener('pointerup',()=>document.body.classList.remove('inking'),true);
+window.addEventListener('pointercancel',()=>document.body.classList.remove('inking'),true);
 wrap.addEventListener('pointerrawupdate',e=>{
   if(!HAS_RAW||!ik||!cur||e.pointerId!==activeId||(mode!=='ink'&&mode!=='cal')) return;
   const ce=e.getCoalescedEvents?e.getCoalescedEvents():null;
   ikMove(ce&&ce.length?ce:[e]);
 });
 function ikEnd(){
+  document.body.classList.remove('inking');
   ikPredClear();
   if(!ik) return;
   if(ik.moved){

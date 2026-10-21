@@ -7,8 +7,12 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.util.Base64;
+import android.view.MotionEvent;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -65,6 +69,11 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         webView = new WebView(this);
         setContentView(webView);
+        // s7a: ask Android to deliver stylus events immediately instead of batching them once per frame
+        webView.setOnTouchListener((v, ev) -> {
+            if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) v.requestUnbufferedDispatch(ev);
+            return false;
+        });
 
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
@@ -96,6 +105,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView v, String url) {
                 v.evaluateJavascript(DL_JS, null);
+                pushPowerSave();
             }
         });
 
@@ -116,6 +126,26 @@ public class MainActivity extends Activity {
 
         webView.addJavascriptInterface(new Bridge(), "Android");
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html");
+
+        // s7b: tell the page when Android battery saver is on, so it can draw the live ink more cheaply
+        psReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context c, Intent i) { pushPowerSave(); }
+        };
+        registerReceiver(psReceiver, new IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED));
+    }
+
+    private BroadcastReceiver psReceiver;
+
+    private void pushPowerSave() {
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        final boolean on = pm != null && pm.isPowerSaveMode();
+        runOnUiThread(() -> webView.evaluateJavascript("window.__powerSave&&window.__powerSave(" + on + ")", null));
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (psReceiver != null) { try { unregisterReceiver(psReceiver); } catch (Exception ignored) { } }
+        super.onDestroy();
     }
 
     private void toast(final String msg) {
