@@ -2710,7 +2710,8 @@ const live=document.createElement('canvas'); live.id='live';
 const lctx=live.getContext('2d', window.Android?{desynchronized:true}:undefined); // s7a: low-latency canvas only inside the APK (Brave black page)
 let psave=/psave/.test(location.hash); // s7b: battery-saver mode (set by the APK, or open with #psave to test)
 if(psave) document.body.classList.add('psave');
-const liveDpr=()=>psave?1:(window.devicePixelRatio||1);
+const PSAVE_DPR=1.5; // live-canvas resolution in battery saver (1 = fastest/blurry, up to device ratio = sharpest)
+const liveDpr=()=>psave?Math.min(PSAVE_DPR,window.devicePixelRatio||1):(window.devicePixelRatio||1);
 let dpr=window.devicePixelRatio||1, ldpr=liveDpr();
 window.__powerSave=on=>{ psave=!!on; document.body.classList.toggle('psave',psave); sizeLive(); };
 // The live canvas only covers the VISIBLE scroll area (fixed to the viewport), so its memory is
