@@ -130,6 +130,20 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void status(final String msg) {
+        runOnUiThread(() -> {
+            Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+            webView.evaluateJavascript("window.__inkStatus&&window.__inkStatus(" + JSONObject.quote(msg) + ",true)", null);
+        });
+    }
+
+    private void runRecognizer(DigitalInkRecognizer rec, Ink ink, final Cb cb) {
+        status("Recognizing…");
+        rec.recognize(ink)
+            .addOnSuccessListener(r -> cb.done(r.getCandidates().isEmpty() ? "" : r.getCandidates().get(0).getText(), true))
+            .addOnFailureListener(e -> cb.done("Recognition failed: " + e.getMessage(), false));
+    }
+
     private interface Cb { void done(String text, boolean ok); }
 
     private void recognizeInk(final String json) {
@@ -157,12 +171,19 @@ public class MainActivity extends Activity {
                 recognizer = DigitalInkRecognition.getClient(DigitalInkRecognizerOptions.builder(inkModel).build());
             }
             final DigitalInkRecognizer rec = recognizer;
-            RemoteModelManager mm = RemoteModelManager.getInstance();
-            mm.download(inkModel, new DownloadConditions.Builder().build())
-                .addOnSuccessListener(v -> rec.recognize(ink)
-                    .addOnSuccessListener(r -> cb.done(r.getCandidates().isEmpty() ? "" : r.getCandidates().get(0).getText(), true))
-                    .addOnFailureListener(e -> cb.done("Recognition failed: " + e.getMessage(), false)))
-                .addOnFailureListener(e -> cb.done("Model download failed (needs internet once): " + e.getMessage(), false));
+            final RemoteModelManager mm = RemoteModelManager.getInstance();
+            final DigitalInkRecognitionModel model = inkModel;
+            status("Checking language pack…");
+            mm.isModelDownloaded(model).addOnSuccessListener(isDl -> {
+                if (isDl) {
+                    runRecognizer(rec, ink, cb);
+                } else {
+                    status("Downloading English language pack… needs internet, please wait");
+                    mm.download(model, new DownloadConditions.Builder().build())
+                        .addOnSuccessListener(v -> { status("Language pack downloaded"); runRecognizer(rec, ink, cb); })
+                        .addOnFailureListener(e -> cb.done("Language pack download failed: " + e.getMessage() + " (check internet / Google Play services)", false));
+                }
+            }).addOnFailureListener(e -> cb.done("ML Kit error: " + e.getMessage() + " (needs Google Play services)", false));
         } catch (Exception e) {
             cb.done("Recognition error: " + e.getMessage(), false);
         }

@@ -4231,7 +4231,7 @@ $('undo').onclick=()=>{
     for(const {layer,sd} of h.items){ const i=layer.strokes.indexOf(sd); if(i>=0) layer.strokes.splice(i,1); }
     for(const {layer,sd} of h.items) inkRemove(layer,sd);
   }else if(h.t==='live'){
-    h.sers=boxSer(h.box); removeBox(h.box); h.box=null;
+    if(h.box&&h.box.page&&h.box.page.boxes.includes(h.box)) ltSetText(h.box,h.oldMd);
     const byLayer=new Map();
     for(const it of h.items){ if(!byLayer.has(it.layer)) byLayer.set(it.layer,[]); byLayer.get(it.layer).push(it); }
     for(const [layer,items] of byLayer){
@@ -4295,7 +4295,7 @@ $('redo').onclick=()=>{
       for(const it of items){ const i=layer.strokes.indexOf(it.sd); if(i>=0) layer.strokes.splice(i,1); }
       for(const it of items) inkRemove(layer,it.sd);
     }
-    h.box=boxMake(pg,h.sers);
+    if(h.box&&h.box.page&&h.box.page.boxes.includes(h.box)) ltSetText(h.box,h.newMd);
   }else if(h.t==='recolor'){
     for(const it of h.items) it.sd.color=it.nw;
     inkReplaceItems(h.items);
@@ -4486,6 +4486,7 @@ function onDown(e){
     showDragRect();
     return;
   }
+  if(liveArmed&&(mode==='pen'||mode==='ink'||mode==='cal')){ e.preventDefault(); const q=pagePos(e,pg); ltPlaceBox(pg,q); return; }
   if(mode==='image') return; // images are only added via the file picker, not by drawing on the page
   if(mode==='text') return; // edit-existing sub-mode: selection is handled by each box's own click handler
   if(activeId!==null) return;
@@ -4700,9 +4701,33 @@ function lsSelectSingle(box){
   lsShowBox();
 }
 
-/* LIVE TEXT — after a short pause in writing, the new ink is recognised (ML Kit, native) and replaced by a text box */
-let liveOn=false, ltPend=null, ltTimer=0, ltId=0; const ltWait=new Map();
-$('mLive').onclick=()=>{ liveOn=!liveOn; $('mLive').classList.toggle('on',liveOn); if(!liveOn){ clearTimeout(ltTimer); ltPend=null; } $('st').textContent=liveOn?'Live text ON — write with the pen, pause, and the ink becomes typed text':'Live text OFF'; };
+/* LIVE TEXT — tap once to place a text box; then write anywhere: after a pause the ink is recognised (ML Kit, native),
+   appended to that box and the ink removed. */
+let liveOn=false, liveArmed=false, ltTarget=null, ltPend=null, ltTimer=0, ltId=0, ltMsgT=0; const ltWait=new Map();
+function ltMsg(msg,sticky){
+  let d=document.getElementById('ltMsg');
+  if(!d){ d=document.createElement('div'); d.id='ltMsg'; d.style.cssText='position:fixed;left:50%;bottom:22px;transform:translateX(-50%);max-width:90vw;padding:10px 16px;border-radius:10px;background:#111827;color:#fff;font:14px/1.3 sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.4);pointer-events:none;text-align:center'; document.body.appendChild(d); }
+  d.textContent=msg; d.style.display='block'; clearTimeout(ltMsgT);
+  if(!sticky) ltMsgT=setTimeout(()=>{ d.style.display='none'; },3500);
+  $('st').textContent=msg;
+}
+window.__inkStatus=ltMsg;
+window.__inkResult=function(txt){ ltMsg('Recognized: '+(txt||'(nothing)')); };
+function ltTargetOk(){ return ltTarget&&ltTarget.page&&ltTarget.page.boxes.includes(ltTarget); }
+function ltRelease(){ if(ltTarget&&ltTarget.el) ltTarget.el.style.pointerEvents=''; ltTarget=null; }
+$('mLive').onclick=()=>{
+  if(liveOn){ liveOn=false; liveArmed=false; ltRelease(); clearTimeout(ltTimer); ltPend=null; $('mLive').classList.remove('on'); ltMsg('Live text OFF'); return; }
+  liveOn=true; liveArmed=true; ltRelease(); $('mLive').classList.add('on');
+  if(mode!=='pen'&&mode!=='ink'&&mode!=='cal') setMode(penVar);
+  ltMsg('Live text ON — tap on the page where the text box should go, then write anywhere',true);
+};
+function ltPlaceBox(pg,q){ // first tap: create the empty target box here
+  const fs=20, o={kind:'text',x:q.x,y:q.y,w:Math.min(320,pg.w-q.x-4),h:60,rot:0,md:'',fs,ff:'sans',tc:null,eng:'v1'};
+  const box=boxMake(pg,o);
+  pg.history.push({t:'paste',items:[],boxes:[box]});
+  ltTarget=box; box.el.style.pointerEvents='none'; liveArmed=false;
+  ltMsg('Text box placed — now write anywhere, pause, and the ink turns into text in the box');
+}
 function ltAdd(pg,layer,sd){
   if(ltPend&&ltPend.pg!==pg) ltFlush();
   if(!ltPend) ltPend={pg,items:[]};
@@ -4713,32 +4738,40 @@ function ltFlush(){
   if(!ltPend) return;
   if(cur){ clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,300); return; } // still writing
   const job=ltPend; ltPend=null;
-  if(!window.Android||!Android.recognizeLive){ $('st').textContent='Live text works only in the Android app'; return; }
+  if(!ltTargetOk()){ ltMsg('Tap the page first to place a text box (press Live text off and on again)'); return; }
+  if(job.pg!==ltTarget.page){ ltMsg('Write on the same page as the text box'); return; }
+  if(!window.Android||!Android.recognizeLive){ ltMsg('Live text works only in the Android app'); return; }
   const items=job.items.filter(it=>it.layer.strokes.includes(it.sd));
   if(!items.length) return;
   items.sort((a,b)=>a.sd.pts[0].x-b.sd.pts[0].x);
   let t=0; const strokes=items.map(({sd})=>sd.pts.map(p=>({x:p.x,y:p.y,t:(t+=10)}))); t+=300;
-  const id=++ltId; ltWait.set(id,{pg:job.pg,items});
+  const id=++ltId; ltWait.set(id,{pg:job.pg,items,box:ltTarget});
+  ltMsg('Recognizing…',true);
   Android.recognizeLive(id,JSON.stringify(strokes));
 }
 window.__liveResult=function(id,text,ok){
   const job=ltWait.get(id); ltWait.delete(id); if(!job) return;
-  if(!ok){ $('st').textContent=text; return; }
-  text=(text||'').trim(); if(!text) return;
-  const pg=job.pg, items=job.items.filter(it=>it.layer.strokes.includes(it.sd)); // skip strokes undone / erased meanwhile
-  if(!items.length) return;
-  const bb=lsBounds(items,[]), ih=bb.y1-bb.y0;
-  const fs=Math.max(10,Math.min(48,Math.round(ih*0.7))), pad=6;
-  const o={kind:'text',x:bb.x0-pad,y:bb.y0-pad,w:Math.max(60,(bb.x1-bb.x0)+pad*2+fs),h:Math.max(fs*2,ih+pad*2),rot:0,md:text,fs,ff:'sans',tc:null,eng:'v1'};
+  if(!ok){ ltMsg(text); return; }
+  text=(text||'').trim(); if(!text){ ltMsg('Could not read that — try writing a bit clearer'); return; }
+  const pg=job.pg, box=job.box, items=job.items.filter(it=>it.layer.strokes.includes(it.sd)); // skip strokes undone / erased meanwhile
+  if(!items.length||!pg.boxes.includes(box)) return;
   const removed=[], keep=new Set(items.map(i=>i.sd));
   for(const layer of new Set(items.map(i=>i.layer))){
     for(let i=layer.strokes.length-1;i>=0;i--){ const sd=layer.strokes[i]; if(keep.has(sd)){ layer.strokes.splice(i,1); removed.push({layer,sd,index:i}); } }
   }
-  const box=boxMake(pg,o);
-  pg.history.push({t:'live',items:removed,box});
+  const oldMd=box.md||'', newMd=oldMd?oldMd+' '+text:text;
+  ltSetText(box,newMd);
+  pg.history.push({t:'live',items:removed,box,oldMd,newMd});
   for(const r of removed) inkRemove(r.layer,r.sd);
   asMark(pg,true);
+  ltMsg('Added: '+text);
 };
+function ltSetText(box,md){
+  box.md=md; if(box.ta) box.ta.value=md; renderBoxContent(box);
+  const pg=box.page, fs=box.fontSize||20, w=box.wPct/100*pg.w, cpl=Math.max(4,Math.floor(w/(fs*0.55)));
+  const need=Math.max(60,Math.ceil((md.length||1)/cpl)*fs*1.5+14); // grow the box downwards when the text gets longer
+  if(need>box.hPct/100*pg.h){ box.hPct=need/pg.h*100; applyBoxRect(box); }
+}
 /* UNIFIED SELECTION TOOLBAR — one bar for everything: Lasso / Select selections (ink, text, images, mixed) AND a single
    text box / image (Text tool, Image tool, Select tool). The bar adapts to what is selected:
    text box  -> Move · Edit (Render while editing) · Aa · | Rotate · Copy · Cut · Delete
@@ -4753,10 +4786,9 @@ function lsRecognize(){ // send the lasso-selected ink to ML Kit (native) and sh
   if(!window.Android||!Android.recognizeInk){ $('st').textContent='Recognition works only in the Android app'; return; }
   const items=s.items.slice().sort((a,b)=>a.sd.pts[0].y-b.sd.pts[0].y||a.sd.pts[0].x-b.sd.pts[0].x);
   let t=0; const strokes=items.map(({sd})=>sd.pts.map(p=>({x:p.x,y:p.y,t:(t+=10)}))); t+=300;
-  $('st').textContent='Recognizing…';
+  ltMsg('Recognizing…',true);
   Android.recognizeInk(JSON.stringify(strokes));
 }
-window.__inkResult=function(txt){ $('st').textContent='Recognized: '+txt; };
 const SB_CUT=SB_SVG('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/>');
 /* s6t: text box colour. box.textColor = null -> automatic (light text on dark pages, near-black on light pages);
    a colour string = chosen by the user for that box. Inline colours set with the format toolbar still win over it. */
