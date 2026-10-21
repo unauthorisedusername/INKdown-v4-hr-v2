@@ -316,6 +316,20 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getClipboard() { // used by the Paste button of the text box toolbar
+            try {
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm == null || !cm.hasPrimaryClip()) return "";
+                ClipData cd = cm.getPrimaryClip();
+                if (cd == null || cd.getItemCount() == 0) return "";
+                CharSequence t = cd.getItemAt(0).coerceToText(MainActivity.this);
+                return t == null ? "" : t.toString();
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
         public void setClipboard(final String text) {
             runOnUiThread(() -> {
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);

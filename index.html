@@ -1523,27 +1523,29 @@ setTimeout(hide,120000);setTimeout(leave,130000); /* safety only: the text engin
 .sel-bar button.tick{color:#16a34a}
 .sel-bar button.tick.done{background:#16a34a;color:#fff;pointer-events:none;transition:background .15s,color .15s}
 .sel-bar button.tick.done svg{animation:tkDraw .3s ease}
-/* DOCKED TOOLBARS: the selection bar sits at the bottom centre; when the formatting (brush) button is on it slides to the left
-   edge as a vertical bar and the formatting panel (#v2tb) opens on its right. */
-.sel-bar{position:fixed;left:0;top:0;transition:left .32s cubic-bezier(.2,.9,.3,1),top .32s cubic-bezier(.2,.9,.3,1)}
-.sel-bar:not(.dockL){max-width:calc(100vw - 12px);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
-.sel-bar:not(.dockL)::-webkit-scrollbar{display:none}
-.sel-bar.v1:not(.dockL){overflow:visible}
-.sel-bar.dockL{flex-direction:column;align-items:stretch;border-radius:22px;overflow-x:hidden;overflow-y:auto;scrollbar-width:none}
-.sel-bar.dockL::-webkit-scrollbar{display:none}
-.sel-bar.dockL.v1{overflow:visible}
-.sel-bar.dockL .sep{width:auto;height:1px;margin:3px 6px;align-self:auto}
-.sel-bar.dockL .cnt{padding:4px 6px;text-align:center}
-.sel-bar.dockL button{justify-content:center}
+/* DOCKED TOOLBARS: the selection bar sits at the bottom centre. While the formatting (brush) button is on, the bar slides to the
+   bottom-left corner and the formatting panel (#v2tb) stands vertically on the left edge, above it. */
+.sel-bar{position:fixed;left:0;top:0;max-width:calc(100vw - 12px);overflow-x:auto;overflow-y:hidden;scrollbar-width:none;transition:left .32s cubic-bezier(.2,.9,.3,1),top .32s cubic-bezier(.2,.9,.3,1)}
+.sel-bar::-webkit-scrollbar{display:none}
+.sel-bar.v1{overflow:visible}
 .sel-bar .fPop{top:auto;bottom:calc(100% + 6px)}
-.sel-bar.dockL .fPop{bottom:auto;top:0;left:calc(100% + 8px)}
-@keyframes v2dockIn{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
+@keyframes v2dockIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
 #v2tb.dockL{transform:none;flex-direction:column;align-items:stretch;gap:4px;padding:6px;border-radius:22px;width:max-content;max-width:calc(100vw - 90px);overflow:hidden;animation:v2dockIn .28s ease both}
 #v2tb.dockL .lft{justify-content:center}
 #v2tb.dockL .lft .rg{display:none}
 #v2tb.dockL .pn{flex-direction:column;align-items:stretch;overflow-x:hidden;overflow-y:auto;min-height:0;flex:1 1 auto;padding:2px;gap:6px;-webkit-mask-image:none;mask-image:none;animation:none}
 #v2tb.dockL .grp{justify-content:center;flex-wrap:wrap;border-radius:14px}
 #v2tb.dockL .fin{align-self:stretch;margin:0}
+/* MERGED PILL: the formatting controls live inside the floating (selection) pill. Brush button -> the pill grows sideways and the
+   controls slide in; when the screen is too narrow the pill scrolls sideways. */
+@keyframes v2segIn{from{max-width:0;opacity:0}to{max-width:1600px;opacity:1}}
+body .sel-bar #v2tb,body.tbLight .sel-bar #v2tb{position:static;display:flex;flex:none;align-items:center;gap:4px;transform:none;max-width:1600px;margin:0 2px;padding:0;border:0;border-radius:0;overflow:hidden;background:none!important;box-shadow:none!important;-webkit-backdrop-filter:none;backdrop-filter:none;animation:v2segIn .32s cubic-bezier(.2,.9,.3,1) both}
+.sel-bar #v2tb .pn{overflow:visible;-webkit-mask-image:none;mask-image:none;animation:none;padding:0;flex:none}
+.sel-bar #v2tb .lft{flex:none}
+.sel-bar #v2tb .fin{display:none}
+/* ONE border only: the outer 1px line. The extra inner lines (top highlight, rings around button groups / Done) are removed. */
+.sel-bar,#v2tb,#v2tbPal,#v2tbFont{box-shadow:var(--e3)!important}
+#v2tb .grp,#v2tb .fin{box-shadow:none!important}
 </style>
 </head>
 <body>
@@ -4791,7 +4793,7 @@ $('mLive').onclick=()=>{
   if(liveOn){
     const done=ltTargetOk()?ltTarget:null;
     liveOn=false; liveArmed=false; ltDrafting=false; ltRelease(); clearTimeout(ltTimer); ltPend=null; $('mLive').classList.remove('on');
-    if(done){ lsSelectSingle(done); ltMsg('Live text OFF — use Render in the box toolbar for formatted text, or Edit to fix the raw text'); } else ltMsg('Live text OFF');
+    if(done){ lsSelectSingle(done); ltMsg('Live text OFF — tap Render in the box toolbar to format the markdown'); } else ltMsg('Live text OFF');
     return;
   }
   liveOn=true; liveArmed=true; ltRelease(); $('mLive').classList.add('on');
@@ -4803,8 +4805,8 @@ function ltMakeTarget(pg,x,y,w,h){
   liveArmed=false; ltMsg('Loading the text engine…',true);
   TE.load().then(()=>{
     if(!liveOn) return;
-    const box=createTextBox(pg,x,y,w,h,true,'v2'); // TipTap box in raw-markdown mode; handwriting is added as raw lines
-    box.fontSize=20; applyBoxFont(box);
+    const box=createTextBox(pg,x,y,w,h,true,'v2'); // handwriting is collected as raw lines, then auto-rendered when live text is switched off
+    box.mode='raw'; box.fontSize=10; applyBoxFont(box);
     pg.history.push({t:'paste',items:[],boxes:[box]});
     ltTarget=box; box.el.style.pointerEvents='none'; box.el.classList.add('ltTarget'); box._ltLast=null;
     ENGINES.v2.render(box); ltCaret(box);
@@ -4955,11 +4957,30 @@ function penBack(down){ // Backspace button: delete now, keep deleting while hel
   document.addEventListener('pointerup',up,true); document.addEventListener('pointercancel',up,true);
 }
 function penStopRep(){ clearTimeout(penRep); clearInterval(penRepIv); penRep=0; penRepIv=0; }
+function penCaret(box,toEnd){ // put the caret at the end (new editor, or a text range was selected) and draw a blinking caret while the pen is the input
+  const ed=box&&box.editor; if(!ed||!TT.TextSelection) return;
+  try{
+    const st=ed.state, sel=st.selection;
+    if(toEnd) ed.view.dispatch(st.tr.setSelection(TT.TextSelection.atEnd(st.doc)));
+    else if(!sel.empty) ed.view.dispatch(st.tr.setSelection(TT.TextSelection.create(st.doc,sel.to)));
+    if(!ed._penCaret&&TT.Plugin&&TT.Decoration&&TT.DecorationSet){
+      ed._penCaret=1;
+      ed.registerPlugin(new TT.Plugin({ key:new TT.PluginKey('penCaret'), props:{ decorations(state){
+        if(!(ltPenIn&&ltTarget===box)) return null;
+        const w=()=>{ const c=document.createElement('span'); c.className='ltCaret'; return c; };
+        return TT.DecorationSet.create(state.doc,[TT.Decoration.widget(state.selection.from,w,{side:1,key:'penCaret'})]);
+      } } }));
+      ed.view.dispatch(ed.state.tr);
+    } else ed.view.dispatch(ed.state.tr); // redraw the caret
+  }catch(e){ console.warn('[pen] caret',e); }
+}
 function penOn(box){
   if(!box||box.engine!=='v2'||box.kind!=='text') return;
   const go=()=>{
-    if(!box.editor) ENGINES.v2.startEdit(box);
+    const fresh=!box.editor;
+    if(fresh) ENGINES.v2.startEdit(box);
     if(!box.editor) return;
+    penCaret(box,fresh); // cursor at the end of the existing text
     ltRelease(); clearTimeout(ltTimer); ltPend=null; ltQueue.length=0;
     liveOn=true; liveArmed=false; ltDrafting=false; ltPenIn=true; ltTarget=box;
     box.el.style.pointerEvents='none'; box.el.classList.add('ltTarget'); // the pen writes on the page, not inside the box
@@ -4980,7 +5001,7 @@ function penOff(n){ // back to the keyboard: finish the words still waiting, the
   n=n||0;
   if((ltPend||ltBusy||ltQueue.length)&&n<20){ if(ltPend&&!cur) ltFlush(); setTimeout(()=>penOff(n+1),250); return; }
   const box=ltTarget; penForceOff();
-  if(box&&box.editor){ try{ box.editor.commands.focus(); }catch(e){} }
+  if(box&&box.editor){ try{ box.editor.view.dispatch(box.editor.state.tr); box.editor.commands.focus(); }catch(e){} } // caret widget off, keyboard back
   if(lsSel) lsShowBox();
 }
 /* UNIFIED SELECTION TOOLBAR — one bar for everything: Lasso / Select selections (ink, text, images, mixed) AND a single
@@ -4990,6 +5011,7 @@ function penOff(n){ // back to the keyboard: finish the words still waiting, the
    ink / several items -> N selected · Rotate · Copy · Cut · Delete */
 let lsSid=0;
 const SB_SVG=p=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+p+'</svg>';
+const SB_PASTE=SB_SVG('<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>');
 const SB_COPY=SB_SVG('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>');
 const SB_REC=SB_SVG('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/><path d="M13 20h7"/>');
 function lsRecognize(){ // send the lasso-selected ink to ML Kit (native) and show the recognised text
@@ -5023,7 +5045,7 @@ function sbBuild(bar,s){
   else{
     if(box){
       h+=sbBtn('move',TB_ICON.move,'Drag to move the box · use the corner / edge handles to resize','','fMv');
-      if(box.kind==='text') h+=(box.engine==='v2'&&box.mode!=='raw')?sbBtn('raw',TB_ICON.edit,'Edit markdown source')+sbBtn('font',BRUSH_SVG,'Formatting bar','','fFont'+(box.fmt?' on':'')):editing?sbBtn('render',TB_ICON.render,'Render'):sbBtn('edit',TB_ICON.edit,'Edit')+(box.engine==='v2'?sbBtn('render',TB_ICON.render,'Render'):'')+sbBtn('font',BRUSH_SVG,'Text style: colour, font, size','','fFont');
+      if(box.kind==='text') h+=(box.engine==='v2')?sbBtn('paste',SB_PASTE,'Paste at the cursor')+sbBtn('render',TB_ICON.render,'Render markdown')+sbBtn('font',BRUSH_SVG,'Formatting bar','','fFont'+(box.fmt?' on':'')):editing?sbBtn('render',TB_ICON.render,'Render'):sbBtn('edit',TB_ICON.edit,'Edit')+sbBtn('font',BRUSH_SVG,'Text style: colour, font, size','','fFont');
       else h+=sbBtn('ratio',TB_ICON.ratio,'Keep aspect ratio when dragging corners','',box.keepRatio?'on':'')+sbBtn('crop',TB_ICON.crop,'Crop');
       if(box.kind==='text'&&box.engine==='v2'){ // text pen input + its Backspace / Enter keys
         const pn=ltPenIn&&ltTarget===box;
@@ -5039,6 +5061,7 @@ function sbBuild(bar,s){
   if(box){
     const rb=bar.querySelector('[data-a="rot"]'); if(rb){ box.rotBtn=rb; rb.classList.toggle('on',!!box.rotOff); }
     if(box.kind==='text'&&box.pop&&(!editing||(box.engine==='v2'&&box.mode!=='raw'))&&!cropping) { box.pop.classList.toggle('isv2',box.engine==='v2'); bar.appendChild(box.pop); } // Aa popup lives inside the unified bar
+    if(box.kind==='text'&&box.engine==='v2'&&box.fmt&&box.editor&&typeof V2TB!=='undefined') V2TB.mount(bar);
   }
 }
 function sbDone(btn){ // tick: turns green, keeps every edit, then the toolbar disappears and the item is unselected
@@ -5082,7 +5105,8 @@ function lsShowBox(dx=0,dy=0){
       if(a==='rec') lsRecognize(); else if(a==='copy') lsCopy(); else if(a==='cut') lsCut(); else if(a==='del') lsDelete();
       else if(a==='rot'){ if(box){ if(box.endCrop) box.endCrop(true); boxRotToggle(box); b.classList.toggle('on',!!box.rotOff); } else lsRotToggle(); }
       else if(a==='raw'){ if(box&&box.engine==='v2') ENGINES.v2.toRaw(box); }
-      else if(a==='edit') via('.fEdit'); else if(a==='render'){ if(box&&box.engine==='v2'&&box.mode==='raw'&&!box.editor) ltRenderRaw(box); else via('.fRender'); } else if(a==='font'){ if(box&&box.engine==='v2') v2Fmt(box,b); else via('.fFont'); }
+      else if(a==='edit') via('.fEdit'); else if(a==='paste'){ if(box&&box.engine==='v2') ENGINES.v2.pasteClip(box); }
+      else if(a==='render'){ if(box&&box.engine==='v2') ENGINES.v2.renderMd(box); else via('.fRender'); } else if(a==='font'){ if(box&&box.engine==='v2') v2Fmt(box,b); else via('.fFont'); }
       else if(a==='crop') via('.fCrop');
       else if(a==='ratio'){ via('.fRatio'); b.classList.toggle('on',!!(box&&box.keepRatio)); }
       else if(a==='apply'){ if(box&&box.endCrop) box.endCrop(true); } else if(a==='cancel'){ if(box&&box.endCrop) box.endCrop(false); }
@@ -5100,10 +5124,10 @@ function lsShowBox(dx=0,dy=0){
   d.style.display='block';
   sbPlace(bar,wasHidden); // bottom centre, or the left edge while the formatting panel is open
 }
-function sbDockLeft(){ // formatting open -> the bar moves to the left edge
+function sbDockLeft(){ // formatting open -> the bar slides to the bottom-left corner
   const s=lsSel; if(!s||s.kind!=='single') return false;
   const b=s.boxes[0]; if(!b||b.kind!=='text') return false;
-  if(b.engine==='v2') return !!(b.fmt&&b.editor);
+  if(b.engine==='v2') return false; // merged pill: the formatting controls grow inside the floating pill instead
   return !!(b.pop&&b.pop.classList.contains('open'));
 }
 function sbPlace(bar,instant){
@@ -5113,10 +5137,9 @@ function sbPlace(bar,instant){
   const tbEl=document.getElementById('bar'), topEdge=Math.round((tbEl?tbEl.getBoundingClientRect().bottom:66)+10);
   const go=()=>{
     bar.classList.toggle('dockL',left); bar.classList.toggle('v1',!!(bx&&bx.engine!=='v2'));
-    bar.style.maxHeight=left?Math.max(120,vh-topEdge-14)+'px':'';
-    const bw=bar.offsetWidth||230, bh=bar.offsetHeight||40;
-    if(left){ bar.style.left=(ol+8)+'px'; bar.style.top=topEdge+'px'; }
-    else{ bar.style.left=Math.max(ol+6,ol+(vw-bw)/2)+'px'; bar.style.top=Math.max(topEdge,ot+vh-bh-14)+'px'; }
+    let bw=bar.offsetWidth||230; const sg=bar.querySelector('#v2tb'); if(sg) bw+=Math.max(0,sg.scrollWidth-sg.offsetWidth); bw=Math.min(bw,vw-12); const bh=bar.offsetHeight||40;
+    bar.style.left=(left?ol+8:Math.max(ol+6,ol+(vw-bw)/2))+'px'; // formatting open: bottom-left corner, otherwise bottom centre
+    bar.style.top=Math.max(topEdge,ot+vh-bh-14)+'px';
   };
   if(instant){ bar.style.transition='none'; go(); void bar.offsetWidth; bar.style.transition=''; } else go();
   if(typeof V2TB!=='undefined') V2TB.place(); // the formatting panel follows the bar
@@ -6090,6 +6113,35 @@ window.TE=TE;
     else b.doc=mdToRawDoc(docToMarkdown(b.doc));
     b.mode='raw'; b.rawDoc=null; b.renderedSnap=null;
   };
+  TE.looksMd=function(t){
+    t=String(t);
+    return /^\s{0,3}(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s?|```|~~~|\|.*\||(-{3,}|\*{3,}|_{3,})\s*$)/m.test(t)
+      || /\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|`[^`\n]+`|\$\$[\s\S]+?\$\$|\$[^\s$][^$\n]*\$|\[[^\]\n]+\]\([^)\n]+\)|(^|[\s(])\*[^*\s][^*\n]*\*(?=[\s).,;:!?]|$)/m.test(t);
+  };
+  TE.pasteMd=function(box,text){ // markdown text -> formatted content inserted at the caret (rest of the box stays as it is)
+    let html; try{ html=markdownToHTML(text).trim(); }catch(e){ console.error('[v2] markdown paste failed',e); return TE.pasteRaw(box,text); }
+    box.editor.chain().focus().insertContent(html,{parseOptions:{preserveWhitespace:false}}).run();
+  };
+  TE.autoMd=function(box){ // runs of plain (unformatted) paragraphs that contain markdown syntax -> formatted nodes; formatted parts stay untouched
+    const ed=box&&box.editor; if(!ed||box.mode==='raw') return false;
+    const groups=[]; let cur=null;
+    ed.state.doc.forEach(function(n,off){
+      let plain=n.type.name==='paragraph';
+      if(plain) n.forEach(function(c){ if(!c.isText||c.marks.length) plain=false; });
+      if(!plain){ cur=null; return; }
+      if(!cur){ cur={from:off,to:off,paras:[]}; groups.push(cur); }
+      cur.to=off+n.nodeSize; cur.paras.push(n.toJSON());
+    });
+    let changed=false;
+    for(let i=groups.length-1;i>=0;i--){
+      const g=groups[i], md=paragraphsToMarkdown(g.paras);
+      if(!TE.looksMd(md)) continue;
+      let nd; try{ nd=htmlToJSON(markdownToHTML(md)); }catch(e){ console.error('[v2] auto-render failed',e); continue; }
+      if(!nd||!nd.content||!nd.content.length) continue;
+      ed.chain().insertContentAt({from:g.from,to:g.to},nd.content).run(); changed=true;
+    }
+    return changed;
+  };
   TE.mdToHTML=markdownToHTML; TE.mdToRawDoc=mdToRawDoc; TE.docToMd=docToMarkdown; TE.pasteRaw=pasteRaw;
 })();
 
@@ -6246,7 +6298,7 @@ const V2TB=(function(){
       // drag the whole header (not its buttons) to move the popup anywhere on screen
       h.addEventListener('pointerdown',e=>{ if(e.target.closest('button')) return;
         const r=bpal.getBoundingClientRect(), dx=e.clientX-r.left, dy=e.clientY-r.top;
-        bpal.style.transform='none'; bpal.style.bottom='auto'; bpal.style.left=r.left+'px'; bpal.style.top=r.top+'px'; bpal.dataset.moved='1';
+        bpal.style.transform='none'; bpal.style.bottom='auto'; bpal.style.right='auto'; bpal.style.left=r.left+'px'; bpal.style.top=r.top+'px'; bpal.dataset.moved='1';
         try{ h.setPointerCapture(e.pointerId); }catch(_){}
         const mv=ev=>{ const w=bpal.offsetWidth, hh=bpal.offsetHeight;
           bpal.style.left=Math.max(4,Math.min(innerWidth-w-4,ev.clientX-dx))+'px'; bpal.style.top=Math.max(4,Math.min(innerHeight-Math.min(hh,60)-4,ev.clientY-dy))+'px'; };
@@ -6365,19 +6417,28 @@ const V2TB=(function(){
     if(!msRanges(e).length){ e.chain().focus()['toggle'+Name]().run(); return; }
     const on=allMarked(name); runAll(c=>on?c['unset'+Name]():c['set'+Name]());
   }
-  function place(){ // docked at the left, on the right side of the selection bar (vertical panel)
+  function mount(bar){ // put the formatting controls inside the floating pill, right after the brush button
+    if(!el) return false;
+    if(!bar){ const sl=lsSel; bar=sl&&sl.pg&&sl.pg.lsBox&&sl.pg.lsBox.firstChild; }
+    const anchor=bar&&bar.querySelector('[data-a="font"]'); if(!anchor) return false;
+    if(el.parentNode!==bar){ anchor.after(el); el.style.animation='none'; void el.offsetWidth; el.style.animation=''; } // grow animation only when it first arrives
+    return true;
+  }
+  function place(){ // popups (colour / font / box appearance) open next to the pill, above it or below it, whichever has room
     if(!el||el.style.display==='none') return;
-    const vv=window.visualViewport, vh=vv?vv.height:innerHeight, ol=vv?vv.offsetLeft:0;
-    const tbEl=document.getElementById('bar'), top=Math.round((tbEl?tbEl.getBoundingClientRect().bottom:66)+10);
-    const sb=document.querySelector('.sel-bar.dockL');
-    const left=sb?Math.round((parseFloat(sb.style.left)||ol+8)+sb.offsetWidth+8):ol+8;
-    el.classList.add('dockL');
-    el.style.left=left+'px'; el.style.top=top+'px'; el.style.bottom='auto'; el.style.maxHeight=Math.max(120,vh-top-14)+'px';
-    const px=(left+el.offsetWidth+8)+'px';
-    pal.style.left=px; pal.style.transform='none'; pal.style.bottom='auto'; pal.style.top=top+'px';
-    fpop.style.left=px; fpop.style.transform='none'; fpop.style.bottom='auto';
-    const fb=fontBtn, ft=fb?fb.getBoundingClientRect().top:top; fpop.style.top=Math.max(top,Math.min(ft,vh-(fpop.offsetHeight||200)-14))+'px';
-    if(!bpal.dataset.moved){ bpal.style.left=px; bpal.style.transform='none'; bpal.style.bottom='auto'; bpal.style.top=top+'px'; }
+    const vv=window.visualViewport, vw=vv?vv.width:innerWidth, vh=vv?vv.height:innerHeight, ol=vv?vv.offsetLeft:0;
+    const bar=el.parentNode&&el.parentNode.classList&&el.parentNode.classList.contains('sel-bar')?el.parentNode:null;
+    const r=bar?bar.getBoundingClientRect():{left:ol+8,right:ol+vw-8,top:innerHeight-60,bottom:innerHeight-14};
+    const above=r.top>=innerHeight-r.bottom;
+    const put=(o,anchor)=>{ if(!o) return;
+      o.style.transform='none'; o.style.right='auto';
+      const w=o.offsetWidth||260, ab=anchor&&anchor.getBoundingClientRect(), cx=ab&&ab.width?(ab.left+ab.right)/2:(r.left+r.right)/2;
+      o.style.left=Math.max(ol+8,Math.min(ol+vw-w-8,Math.round(cx-w/2)))+'px';
+      if(above){ o.style.top='auto'; o.style.bottom=Math.max(8,Math.round(innerHeight-r.top+8))+'px'; }
+      else{ o.style.bottom='auto'; o.style.top=Math.round(r.bottom+8)+'px'; } };
+    put(pal,el.querySelector('[data-c=color]')); put(fpop,el.querySelector('[data-c=font]'));
+    fpop.style.maxHeight=Math.max(120,(above?r.top:innerHeight-r.bottom)-24)+'px';
+    if(!bpal.dataset.moved) put(bpal,el.querySelector('[data-c=boxstyle]'));
   }
   function askCancel(on){ const c=bpal&&bpal.querySelector('.cf'); if(c) c.style.display=on?'flex':'none'; if(bpal) bpal.classList.toggle('cfm',!!on); }
   function commit(){ askCancel(false); if(box&&dirty){ try{ asMark(box.page,true); }catch(_){} } dirty=false; setMode('txt'); }
@@ -6450,9 +6511,9 @@ const V2TB=(function(){
     bpal.querySelectorAll('[data-bfont]').forEach(b=>b.classList.toggle('on',b.dataset.bfont===(box.fontFamily||'sans')));
     if(raw){ pal.style.display='none'; fpop.style.display='none'; }
   }
-  function show(b){ if(!el) build(); if(box!==b){ multiOn=false; mode='txt'; el.dataset.m='txt'; fin.dataset.c='done'; } box=b; el.style.display='flex'; sync(); place(); }
-  function hide(){ askCancel(false); if(box&&dirty){ try{ asMark(box.page,true); }catch(_){} } dirty=false; box=null; multiOn=false; mode='txt'; if(!el) return; el.dataset.m='txt'; fin.dataset.c='done'; el.style.display='none'; try{ if(lsSel&&lsSel.pg.lsBox&&lsSel.pg.lsBox.style.display==='block') sbPlace(lsSel.pg.lsBox.firstChild); }catch(_){} pal.style.display='none'; fpop.style.display='none'; bpal.style.display='none'; }
-  return {show,hide,sync,attach,place};
+  function show(b){ if(!el) build(); if(box!==b){ multiOn=false; mode='txt'; el.dataset.m='txt'; fin.dataset.c='done'; } box=b; el.style.display='flex'; const had=mount(); sync(); place(); if(had&&lsSel){ try{ lsShowBox(); }catch(_){} } }
+  function hide(){ askCancel(false); if(box&&dirty){ try{ asMark(box.page,true); }catch(_){} } dirty=false; box=null; multiOn=false; mode='txt'; if(!el) return; el.dataset.m='txt'; fin.dataset.c='done'; el.style.display='none'; if(el.parentNode!==document.body) document.body.appendChild(el); try{ if(lsSel&&lsSel.pg.lsBox&&lsSel.pg.lsBox.style.display==='block') sbPlace(lsSel.pg.lsBox.firstChild); }catch(_){} pal.style.display='none'; fpop.style.display='none'; bpal.style.display='none'; }
+  return {show,hide,sync,attach,place,mount};
 })();
 
 /* s6i: PDF export of new-engine (v2) boxes. The box is laid out off-screen by the browser (same CSS as the live box, --z:1),
@@ -6864,7 +6925,7 @@ const ENGINES={
   v2:{ // new engine (a4): doc JSON rendered with TipTap schema. Step 5: view + edit (toolbar formatting comes in step 7).
     create:(pg,x,y,w,h,noEdit)=>{
       const b=createBoxV1(pg,x,y,w,h,true);
-      b.engine='v2'; b.mode='raw'; b.doc={type:'doc',content:[{type:'paragraph'}]}; b.fontSize=16; b.fontFamily='sans';
+      b.engine='v2'; b.mode='rendered'; b.doc={type:'doc',content:[{type:'paragraph'}]}; b.fontSize=10; b.fontFamily='sans';
       b.el.classList.add('v2'); applyBoxFont(b); ENGINES.v2.render(b);
       b.rd.addEventListener('pointerdown',ev=>{ if(b.el.classList.contains('editing')) ev.stopPropagation(); }); // taps/selection inside the editor must not pan or draw
       return b;
@@ -6883,10 +6944,12 @@ const ENGINES={
         extensions:b.mode==='raw'?TE.RAW_EXTENSIONS:TE.EXTENSIONS,
         content:b.doc,
         autofocus:'end',
-        editorProps:{ handlePaste:(view,ev)=>{ // raw mode: paste as plain lines (blank lines kept); rendered mode keeps the editor default
-          if(b.mode!=='raw') return false;
-          const t=ev.clipboardData&&ev.clipboardData.getData('text/plain'); if(!t) return false;
-          ev.preventDefault(); TE.pasteRaw(b,t); return true; } },
+        editorProps:{ handlePaste:(view,ev)=>{ // raw (live-text) mode: plain lines; rendered mode: pasted markdown is converted to formatted content
+          const cd=ev.clipboardData; if(!cd) return false;
+          const t=cd.getData('text/plain'); if(!t) return false;
+          if(b.mode!=='raw'&&(cd.getData('text/html')||'').indexOf('data-pm-slice')>=0) return false; // copied from a TipTap box: keep its formatting
+          ev.preventDefault(); TE.pasteRaw(b,t); return true; } }, // markdown stays as plain text until Render is pressed
+        enableInputRules:false, enablePasteRules:false,
         onUpdate:ctx=>{ b.doc=ctx.editor.getJSON(); asMark(b.page,true); },
         onTransaction:()=>{ if(b.editor) V2TB.sync(); },
         onSelectionUpdate:()=>{ if(b.editor) V2TB.sync(); }
@@ -6910,6 +6973,22 @@ const ENGINES={
       asMark(b.page,true);
       ENGINES.v2.startEdit(b);
     },
+    renderMd:b=>{ // Render button: markdown left as plain text -> formatted; content that is already formatted is not touched
+      if(!TE.ready){ ltMsg('Text engine is still loading — try again in a moment'); return; }
+      if(b.mode==='raw'){ if(b.editor){ ENGINES.v2.toRendered(b); } else ltRenderRaw(b); return; }
+      if(!b.editor) ENGINES.v2.startEdit(b);
+      if(!b.editor) return;
+      try{ TE.autoMd(b); }catch(e){ console.error('[v2] render failed',e); }
+      b.doc=b.editor.getJSON(); asMark(b.page,true); V2TB.sync();
+    },
+    pasteClip:async b=>{ // Paste button: clipboard text goes in at the cursor as plain text
+      if(!TE.ready){ ltMsg('Text engine is still loading — try again in a moment'); return; }
+      let t=''; try{ if(window.Android&&Android.getClipboard) t=Android.getClipboard()||''; else t=await navigator.clipboard.readText(); }catch(e){ ltMsg('Clipboard blocked — allow clipboard access, or long-press in the box and choose Paste'); return; }
+      if(!t){ ltMsg('Clipboard is empty'); return; }
+      if(!b.editor) ENGINES.v2.startEdit(b);
+      if(!b.editor) return;
+      TE.pasteRaw(b,t); b.doc=b.editor.getJSON(); asMark(b.page,true);
+    },
     toRaw:b=>{ // Edit icon: back to the markdown source (live raw editor); also works on a committed box
       if(b.mode==='raw'){ if(!b.editor) ENGINES.v2.startEdit(b); return; }
       if(b.editor){ b.doc=b.editor.getJSON(); b.editor.destroy(); b.editor=null; }
@@ -6920,7 +6999,7 @@ const ENGINES={
     load:(b,o)=>{
       b.doc=o.doc||{type:'doc',content:[{type:'paragraph'}]}; b.mode=o.mode||'rendered';
       b.rawDoc=(b.mode==='rendered'&&o.rawDoc)?o.rawDoc:null; b.renderedSnap=b.rawDoc?JSON.stringify(b.doc):null;
-      b.fontSize=o.fs||16; b.fontFamily=o.ff||'sans'; b.textColor=o.tc||null; b.bgc=o.bg||null; b.bd=!!o.bd; b.bdc=o.bdc||null;
+      b.fontSize=o.fs||10; b.fontFamily=o.ff||'sans'; b.textColor=o.tc||null; b.bgc=o.bg||null; b.bd=!!o.bd; b.bdc=o.bdc||null;
       b.el.classList.add('v2'); applyBoxFont(b); applyBoxRect(b); ENGINES.v2.render(b);
     },
     render:b=>{
@@ -6930,7 +7009,7 @@ const ENGINES={
         TE.load().then(()=>{ if(b.el.isConnected) ENGINES.v2.render(b); }).catch(()=>{ rd.textContent='(could not load the text engine - check internet)'; });
         return;
       }
-      rd.className=cls;
+      rd.className=v2Cls(b); v2Sync(b);
       if(TE.isEmpty(b.doc)){ rd.innerHTML='<p class="ph">Empty</p>'; return; }
       try{ rd.innerHTML=TE.boxHTML(b.doc,b.mode==='raw'); TE.renderMath(rd); }
       catch(e){ console.error('[v2] render failed',e); rd.textContent=TE.plain(b.doc); }
