@@ -1806,6 +1806,8 @@ setTimeout(hide,6000);setTimeout(leave,12000);
         <button id="saveProj" class="mi" data-close aria-label="Save project"><svg class="ic"><use href="#i-save"/></svg>Save project</button>
         <button id="openProj" class="mi" data-close aria-label="Open project"><svg class="ic"><use href="#i-open"/></svg>Open project</button>
         <div class="msep"></div>
+        <button id="lowResBtn" class="mi" aria-label="Low-resolution live ink" title="On: live ink drawn at lower resolution (faster). Off: native resolution.">Low-res live ink<span class="mt"></span></button>
+        <div class="msep"></div>
         <button id="clr" class="mi danger" data-close aria-label="Clear page ink"><svg class="ic"><use href="#i-trash"/></svg>Clear page ink</button>
       </div>
     </span>
@@ -2711,9 +2713,11 @@ const lctx=live.getContext('2d', window.Android?{desynchronized:true}:undefined)
 let psave=/psave/.test(location.hash); // s7b: battery-saver mode (set by the APK, or open with #psave to test)
 if(psave) document.body.classList.add('psave');
 const PSAVE_DPR=1.5; // live-canvas resolution in battery saver (1 = fastest/blurry, up to device ratio = sharpest)
-const liveDpr=()=>psave?Math.min(PSAVE_DPR,window.devicePixelRatio||1):(window.devicePixelRatio||1);
+let lowResPref=null; try{ lowResPref=localStorage.getItem('inkLowRes'); }catch(e){} // '1' = always low-res, '0' = always native, null = follow battery saver
+const lowResOn=()=>lowResPref==='1'||(lowResPref===null&&psave);
+const liveDpr=()=>lowResOn()?Math.min(PSAVE_DPR,window.devicePixelRatio||1):(window.devicePixelRatio||1);
 let dpr=window.devicePixelRatio||1, ldpr=liveDpr();
-window.__powerSave=on=>{ psave=!!on; document.body.classList.toggle('psave',psave); sizeLive(); };
+window.__powerSave=on=>{ psave=!!on; document.body.classList.toggle('psave',psave); sizeLive(); const b=document.getElementById('lowResBtn'); if(b) b.classList.toggle('on',lowResOn()); };
 // The live canvas only covers the VISIBLE scroll area (fixed to the viewport), so its memory is
 // constant at any zoom. liveXform() maps page units -> screen pixels, so the stroke you're
 // drawing is sharp at every zoom level.
@@ -2735,6 +2739,8 @@ function sizeLive(){
 }
 sizeLive();
 window.addEventListener('resize',sizeLive);
+(function(){ const b=document.getElementById('lowResBtn'); if(!b) return; b.classList.toggle('on',lowResOn());
+  b.addEventListener('click',()=>{ lowResPref=lowResOn()?'0':'1'; try{ localStorage.setItem('inkLowRes',lowResPref); }catch(e){} b.classList.toggle('on',lowResOn()); sizeLive(); }); })();
 if(window.ResizeObserver) new ResizeObserver(sizeLive).observe(wrap);
 
 /* ---------------------------------------------------------------
