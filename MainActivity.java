@@ -29,6 +29,8 @@ import com.google.mlkit.vision.digitalink.DigitalInkRecognitionModelIdentifier;
 import com.google.mlkit.vision.digitalink.DigitalInkRecognizer;
 import com.google.mlkit.vision.digitalink.DigitalInkRecognizerOptions;
 import com.google.mlkit.vision.digitalink.Ink;
+import com.google.mlkit.vision.digitalink.RecognitionContext;
+import com.google.mlkit.vision.digitalink.WritingArea;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -137,33 +139,19 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void runRecognizer(DigitalInkRecognizer rec, Ink ink, final Cb cb) {
-        status("Recognizing…");
-        rec.recognize(ink)
-            .addOnSuccessListener(r -> cb.done(r.getCandidates().isEmpty() ? "" : r.getCandidates().get(0).getText(), true))
-            .addOnFailureListener(e -> cb.done("Recognition failed: " + e.getMessage(), false));
-    }
-
     private interface Cb { void done(String text, boolean ok); }
 
     private void recognizeInk(final String json) {
         recognize(json, (t, ok) -> sendResult(t));
     }
 
+    // payload: {pre:"text before", lines:[{strokes:[[{x,y,t}]], w, h}]} — each line is recognised on its own, with the
+    // text recognised so far as context, and the results are joined with "\n".
     private void recognize(final String json, final Cb cb) {
         try {
-            Ink.Builder ib = Ink.builder();
-            JSONArray strokes = new JSONArray(json);
-            for (int i = 0; i < strokes.length(); i++) {
-                JSONArray pts = strokes.getJSONArray(i);
-                Ink.Stroke.Builder sb = Ink.Stroke.builder();
-                for (int k = 0; k < pts.length(); k++) {
-                    JSONObject p = pts.getJSONObject(k);
-                    sb.addPoint(Ink.Point.create((float) p.getDouble("x"), (float) p.getDouble("y"), p.getLong("t")));
-                }
-                ib.addStroke(sb.build());
-            }
-            final Ink ink = ib.build();
+            final JSONObject payload = new JSONObject(json);
+            final JSONArray lines = payload.getJSONArray("lines");
+            final String pre = payload.optString("pre", "");
 
             if (recognizer == null) {
                 DigitalInkRecognitionModelIdentifier id = DigitalInkRecognitionModelIdentifier.fromLanguageTag("en-US");
@@ -176,14 +164,49 @@ public class MainActivity extends Activity {
             status("Checking language pack…");
             mm.isModelDownloaded(model).addOnSuccessListener(isDl -> {
                 if (isDl) {
-                    runRecognizer(rec, ink, cb);
+                    runLines(rec, lines, 0, pre, new StringBuilder(), cb);
                 } else {
                     status("Downloading English language pack… needs internet, please wait");
                     mm.download(model, new DownloadConditions.Builder().build())
-                        .addOnSuccessListener(v -> { status("Language pack downloaded"); runRecognizer(rec, ink, cb); })
+                        .addOnSuccessListener(v -> { status("Language pack downloaded"); runLines(rec, lines, 0, pre, new StringBuilder(), cb); })
                         .addOnFailureListener(e -> cb.done("Language pack download failed: " + e.getMessage() + " (check internet / Google Play services)", false));
                 }
             }).addOnFailureListener(e -> cb.done("ML Kit error: " + e.getMessage() + " (needs Google Play services)", false));
+        } catch (Exception e) {
+            cb.done("Recognition error: " + e.getMessage(), false);
+        }
+    }
+
+    private void runLines(final DigitalInkRecognizer rec, final JSONArray lines, final int idx, final String pre, final StringBuilder acc, final Cb cb) {
+        if (idx >= lines.length()) { cb.done(acc.toString(), true); return; }
+        try {
+            JSONObject line = lines.getJSONObject(idx);
+            JSONArray strokes = line.getJSONArray("strokes");
+            Ink.Builder ib = Ink.builder();
+            for (int i = 0; i < strokes.length(); i++) {
+                JSONArray pts = strokes.getJSONArray(i);
+                Ink.Stroke.Builder sb = Ink.Stroke.builder();
+                for (int k = 0; k < pts.length(); k++) {
+                    JSONObject p = pts.getJSONObject(k);
+                    sb.addPoint(Ink.Point.create((float) p.getDouble("x"), (float) p.getDouble("y"), p.getLong("t")));
+                }
+                ib.addStroke(sb.build());
+            }
+            String ctx = acc.length() > 0 ? acc.toString() : pre;
+            if (ctx.length() > 20) ctx = ctx.substring(ctx.length() - 20);
+            RecognitionContext rc = RecognitionContext.builder()
+                .setPreContext(ctx)
+                .setWritingArea(new WritingArea((float) line.getDouble("w"), (float) line.getDouble("h")))
+                .build();
+            status(lines.length() > 1 ? "Recognizing line " + (idx + 1) + " of " + lines.length() + "…" : "Recognizing…");
+            rec.recognize(ib.build(), rc)
+                .addOnSuccessListener(r -> {
+                    String t = r.getCandidates().isEmpty() ? "" : r.getCandidates().get(0).getText();
+                    if (acc.length() > 0 && !t.isEmpty()) acc.append("\n");
+                    acc.append(t);
+                    runLines(rec, lines, idx + 1, pre, acc, cb);
+                })
+                .addOnFailureListener(e -> cb.done("Recognition failed: " + e.getMessage(), false));
         } catch (Exception e) {
             cb.done("Recognition error: " + e.getMessage(), false);
         }

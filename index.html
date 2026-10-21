@@ -4231,7 +4231,7 @@ $('undo').onclick=()=>{
     for(const {layer,sd} of h.items){ const i=layer.strokes.indexOf(sd); if(i>=0) layer.strokes.splice(i,1); }
     for(const {layer,sd} of h.items) inkRemove(layer,sd);
   }else if(h.t==='live'){
-    if(h.box&&h.box.page&&h.box.page.boxes.includes(h.box)) ltSetText(h.box,h.oldMd);
+    if(h.box&&h.box.page&&h.box.page.boxes.includes(h.box)){ h.box._ltLast=h.prevLast||null; ltApply(h.box,h.oldDoc); }
     const byLayer=new Map();
     for(const it of h.items){ if(!byLayer.has(it.layer)) byLayer.set(it.layer,[]); byLayer.get(it.layer).push(it); }
     for(const [layer,items] of byLayer){
@@ -4295,7 +4295,7 @@ $('redo').onclick=()=>{
       for(const it of items){ const i=layer.strokes.indexOf(it.sd); if(i>=0) layer.strokes.splice(i,1); }
       for(const it of items) inkRemove(layer,it.sd);
     }
-    if(h.box&&h.box.page&&h.box.page.boxes.includes(h.box)) ltSetText(h.box,h.newMd);
+    if(h.box&&h.box.page&&h.box.page.boxes.includes(h.box)) ltApply(h.box,h.newDoc);
   }else if(h.t==='recolor'){
     for(const it of h.items) it.sd.color=it.nw;
     inkReplaceItems(h.items);
@@ -4476,6 +4476,14 @@ function onDown(e){
   if(e.target && e.target.closest && e.target.closest('.tbox')) return;
   // Fingers only navigate (scroll / pinch, see TOUCH NAVIGATION); pen and mouse do the actual work.
   if(e.pointerType==='touch') return;
+  if(liveOn&&(mode==='pen'||mode==='ink'||mode==='cal')){
+    if(liveArmed){ // first gesture: draw the text box
+      if(activeId!==null) return;
+      e.preventDefault(); deselectAll(); beginGesture(e,pg);
+      const q=pos(e); txDraft={x0:q.x,y0:q.y,x1:q.x,y1:q.y}; ltDrafting=true; showDragRect(); return;
+    }
+    clearTimeout(ltTimer); ltT0=performance.now(); ltNewWordCheck(pg,pagePos(e,pg)); if(ltPend) ltTimer=setTimeout(ltFlush,2500); // a new stroke starts: a new word converts the previous one at once; otherwise hold, remember when it began
+  }
   if(mode==='text'&&(textSubMode==='add'||textSubMode==='addv2')){
     if(activeId!==null) return;
     e.preventDefault();
@@ -4486,7 +4494,6 @@ function onDown(e){
     showDragRect();
     return;
   }
-  if(liveArmed&&(mode==='pen'||mode==='ink'||mode==='cal')){ e.preventDefault(); const q=pagePos(e,pg); ltPlaceBox(pg,q); return; }
   if(mode==='image') return; // images are only added via the file picker, not by drawing on the page
   if(mode==='text') return; // edit-existing sub-mode: selection is handled by each box's own click handler
   if(activeId!==null) return;
@@ -4564,9 +4571,11 @@ function onUp(e){
   if(e.pointerId!==activeId) return;
   activeId=null;
   holdClear();
+  if(liveOn&&ltPend){ clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,LT_DELAY); }
   if(txDraft){
     const d=txDraft, x0=Math.min(d.x0,d.x1),x1=Math.max(d.x0,d.x1),y0=Math.min(d.y0,d.y1),y1=Math.max(d.y0,d.y1);
     hideDragRect(); txDraft=null;
+    if(ltDrafting){ ltDrafting=false; ltMakeTarget(gp,x0,y0,x1-x0,y1-y0); return; }
     if(x1-x0>10&&y1-y0>10){
       if(textSubMode==='addv2'){ const P=gp; TE.load().then(()=>{ const nb=createTextBox(P,x0,y0,x1-x0,y1-y0,true,'v2'); editBox(nb); }).catch(err=>{ console.error(err); alert('Could not load the TipTap engine (needs internet on first use).'); }); }
       else createTextBox(gp,x0,y0,x1-x0,y1-y0);
@@ -4613,7 +4622,7 @@ function onUp(e){
   gp.history.push({t:'add',layer,sd:cur,extra:headSd});
   const _sd=cur; cur=null;
   clearLive(); if(headSd) repaintLayer(layer); else inkAdd(layer,_sd); __inkPerf.add(performance.now()-_t0);
-  if(liveOn&&(mode==='pen'||mode==='ink'||mode==='cal')&&!_sd.alpha) ltAdd(gp,layer,_sd);
+  if(liveOn&&(mode==='pen'||mode==='ink'||mode==='cal')&&!_sd.alpha) ltAdd(gp,layer,_sd,ltT0,performance.now());
 }
 wrap.addEventListener('click',e=>{
   if(!pageOf(e.target)) return;
@@ -4701,9 +4710,12 @@ function lsSelectSingle(box){
   lsShowBox();
 }
 
-/* LIVE TEXT — tap once to place a text box; then write anywhere: after a pause the ink is recognised (ML Kit, native),
-   appended to that box and the ink removed. */
-let liveOn=false, liveArmed=false, ltTarget=null, ltPend=null, ltTimer=0, ltId=0, ltMsgT=0; const ltWait=new Map();
+/* LIVE TEXT — draw a text box once (blinking caret), then write anywhere: after a pause the ink is split into lines,
+   recognised line by line (ML Kit, native, with real pen timing + the text already in the box as context),
+   appended at the caret and the ink removed. */
+let liveOn=false, liveArmed=false, ltDrafting=false, ltTarget=null, ltPend=null, ltTimer=0, ltId=0, ltMsgT=0, ltT0=0;
+const ltWait=new Map(), STROKE_T=new WeakMap(), LT_DELAY=600, ltQueue=[]; let ltBusy=null;
+(function(){ const st=document.createElement('style'); st.textContent='.ltCaret{display:inline-block;width:2px;height:1.1em;margin-left:1px;vertical-align:text-bottom;background:#2563eb;animation:ltBlink 1s steps(1) infinite}@keyframes ltBlink{50%{opacity:0}}.tbox.ltTarget{outline:2px dashed #2563eb;outline-offset:2px}'; document.head.appendChild(st); })();
 function ltMsg(msg,sticky){
   let d=document.getElementById('ltMsg');
   if(!d){ d=document.createElement('div'); d.id='ltMsg'; d.style.cssText='position:fixed;left:50%;bottom:22px;transform:translateX(-50%);max-width:90vw;padding:10px 16px;border-radius:10px;background:#111827;color:#fff;font:14px/1.3 sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.4);pointer-events:none;text-align:center'; document.body.appendChild(d); }
@@ -4712,45 +4724,126 @@ function ltMsg(msg,sticky){
   $('st').textContent=msg;
 }
 window.__inkStatus=ltMsg;
-window.__inkResult=function(txt){ ltMsg('Recognized: '+(txt||'(nothing)')); };
+window.__inkResult=function(txt){ ltMsg('Recognized: '+(txt||'(nothing)').replace(/\n/g,' / ')); };
 function ltTargetOk(){ return ltTarget&&ltTarget.page&&ltTarget.page.boxes.includes(ltTarget); }
-function ltRelease(){ if(ltTarget&&ltTarget.el) ltTarget.el.style.pointerEvents=''; ltTarget=null; }
+function ltCaret(box){ // blinking caret at the end of the text
+  if(!box||!box.rd) return;
+  box.rd.querySelectorAll('.ph,.ltCaret').forEach(n=>{ if(n.classList.contains('ltCaret')) n.remove(); else n.remove(); });
+  const host=box.rd.lastElementChild&&box.rd.lastElementChild.nodeType===1&&!/^(TABLE|UL|OL|PRE)$/.test(box.rd.lastElementChild.tagName)?box.rd.lastElementChild:box.rd;
+  const c=document.createElement('span'); c.className='ltCaret'; host.appendChild(c);
+}
+function ltRelease(){
+  if(ltTarget&&ltTarget.el){ ltTarget.el.style.pointerEvents=''; ltTarget.el.classList.remove('ltTarget'); ltTarget.rd&&ltTarget.rd.querySelectorAll('.ltCaret').forEach(n=>n.remove()); }
+  ltTarget=null;
+}
 $('mLive').onclick=()=>{
-  if(liveOn){ liveOn=false; liveArmed=false; ltRelease(); clearTimeout(ltTimer); ltPend=null; $('mLive').classList.remove('on'); ltMsg('Live text OFF'); return; }
+  if(liveOn){
+    const done=ltTargetOk()?ltTarget:null;
+    liveOn=false; liveArmed=false; ltDrafting=false; ltRelease(); clearTimeout(ltTimer); ltPend=null; $('mLive').classList.remove('on');
+    if(done){ lsSelectSingle(done); ltMsg('Live text OFF — use Render in the box toolbar for formatted text, or Edit to fix the raw text'); } else ltMsg('Live text OFF');
+    return;
+  }
   liveOn=true; liveArmed=true; ltRelease(); $('mLive').classList.add('on');
   if(mode!=='pen'&&mode!=='ink'&&mode!=='cal') setMode(penVar);
-  ltMsg('Live text ON — tap on the page where the text box should go, then write anywhere',true);
+  ltMsg('Live text ON — drag a rectangle on the page to draw the text box',true);
 };
-function ltPlaceBox(pg,q){ // first tap: create the empty target box here
-  const fs=20, o={kind:'text',x:q.x,y:q.y,w:Math.min(320,pg.w-q.x-4),h:60,rot:0,md:'',fs,ff:'sans',tc:null,eng:'v1'};
-  const box=boxMake(pg,o);
-  pg.history.push({t:'paste',items:[],boxes:[box]});
-  ltTarget=box; box.el.style.pointerEvents='none'; liveArmed=false;
-  ltMsg('Text box placed — now write anywhere, pause, and the ink turns into text in the box');
+function ltMakeTarget(pg,x,y,w,h){
+  if(w<40||h<30){ w=Math.min(300,pg.w-x-4); h=90; } // a plain tap gives a default-size box
+  liveArmed=false; ltMsg('Loading the text engine…',true);
+  TE.load().then(()=>{
+    if(!liveOn) return;
+    const box=createTextBox(pg,x,y,w,h,true,'v2'); // TipTap box in raw-markdown mode; handwriting is added as raw lines
+    box.fontSize=20; applyBoxFont(box);
+    pg.history.push({t:'paste',items:[],boxes:[box]});
+    ltTarget=box; box.el.style.pointerEvents='none'; box.el.classList.add('ltTarget'); box._ltLast=null;
+    ENGINES.v2.render(box); ltCaret(box);
+    ltMsg('Text box ready — write anywhere, pause, and the ink becomes raw text at the caret');
+  }).catch(()=>{ liveArmed=true; ltMsg('The text engine needs internet on first use — check connection, then drag the box again'); });
 }
-function ltAdd(pg,layer,sd){
+function ltLines(box){ return TE.isEmpty(box.doc)?[]:(box.doc.content||[]).map(p=>(p.content||[]).map(n=>n.text||'').join('')); }
+function ltApply(box,doc){ // show a (raw) document in the box and make room for it
+  box.doc=doc; ENGINES.v2.render(box);
+  const pg=box.page, fs=box.fontSize||20, w=box.wPct/100*pg.w, cpl=Math.max(4,Math.floor(w/(fs*0.55)));
+  const n=ltLines(box).reduce((a,l)=>a+Math.max(1,Math.ceil(l.length/cpl)),0);
+  const need=Math.max(70,(n+0.5)*fs*1.7+16);
+  if(need>box.hPct/100*pg.h){ box.hPct=need/pg.h*100; applyBoxRect(box); }
+  if(box===ltTarget) ltCaret(box);
+  asMark(pg,true);
+}
+function ltRenderRaw(box){ // Render button on a raw box that is not being edited: raw markdown -> formatted text, then rich editing
+  if(!TE.ready){ ltMsg('Text engine is still loading — try again in a moment'); return; }
+  TE.rawToRendered(box); ENGINES.v2.render(box); ENGINES.v2.startEdit(box);
+}
+function ltAdd(pg,layer,sd,t0,t1){
+  STROKE_T.set(sd,{t0,t1});
   if(ltPend&&ltPend.pg!==pg) ltFlush();
   if(!ltPend) ltPend={pg,items:[]};
   ltPend.items.push({layer,sd});
-  clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,800);
+  clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,LT_DELAY);
 }
-function ltFlush(){
+/* Build the ML Kit payload: real timestamps, ink split into lines, writing area per line, text before the caret as context */
+function inkPayload(items,pre){
+  const info=items.map(({sd})=>{
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9; for(const p of sd.pts){ if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y; }
+    return {sd,x0,y0,x1,y1,cy:(y0+y1)/2,h:Math.max(1,y1-y0),tt:STROKE_T.get(sd)};
+  });
+  const real=info.every(i=>i.tt&&isFinite(i.tt.t0)&&isFinite(i.tt.t1));
+  let base=real?Math.min(...info.map(i=>i.tt.t0)):0, clock=0;
+  for(const i of info){
+    if(real){ i.a=i.tt.t0-base; i.b=Math.max(i.a+30,i.tt.t1-base); }
+    else{ i.a=clock; i.b=clock+Math.max(80,i.sd.pts.length*8); clock=i.b+250; }
+  }
+  const lines=[]; // group strokes into text lines by vertical position
+  for(const i of info){
+    let best=null,bd=1e9;
+    for(const L of lines){ const avg=L.sumH/L.n, pad=0.35*avg; const d=i.cy<L.y0-pad?L.y0-pad-i.cy:(i.cy>L.y1+pad?i.cy-L.y1-pad:0); if(d===0&&bd>0){ best=L; bd=0; } else if(d===0&&L===lines[lines.length-1]) best=L; }
+    if(!best){ best={items:[],y0:1e9,y1:-1e9,x0:1e9,x1:-1e9,sumH:0,n:0}; lines.push(best); }
+    best.items.push(i); best.y0=Math.min(best.y0,i.y0); best.y1=Math.max(best.y1,i.y1); best.x0=Math.min(best.x0,i.x0); best.x1=Math.max(best.x1,i.x1); best.sumH+=i.h; best.n++;
+  }
+  lines.sort((p,q)=>p.y0-q.y0);
+  const out=lines.map(L=>{
+    const lh=Math.max(L.y1-L.y0,12), lw=L.x1-L.x0;
+    const strokes=L.items.map(i=>{
+      const pts=i.sd.pts; let tot=0; const cum=[0]; for(let k=1;k<pts.length;k++){ tot+=Math.hypot(pts[k].x-pts[k-1].x,pts[k].y-pts[k-1].y); cum.push(tot); }
+      let last=-1; return pts.map((p,k)=>{ let t=Math.round(i.a+(tot>0?cum[k]/tot:k/Math.max(1,pts.length-1))*(i.b-i.a)); if(t<=last) t=last+1; last=t; return {x:p.x,y:p.y,t}; });
+    });
+    return {strokes,w:Math.max(lw*1.25+lh,lh*6),h:lh*1.8,y0:L.y0,y1:L.y1};
+  });
+  return {payload:{pre:(pre||'').slice(-20),lines:out},lines:out};
+}
+function ltFlush(){ // the pending strokes are one finished word (or phrase): queue it for recognition
   if(!ltPend) return;
-  if(cur){ clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,300); return; } // still writing
+  if(cur){ clearTimeout(ltTimer); ltTimer=setTimeout(ltFlush,250); return; } // still writing
   const job=ltPend; ltPend=null;
-  if(!ltTargetOk()){ ltMsg('Tap the page first to place a text box (press Live text off and on again)'); return; }
-  if(job.pg!==ltTarget.page){ ltMsg('Write on the same page as the text box'); return; }
-  if(!window.Android||!Android.recognizeLive){ ltMsg('Live text works only in the Android app'); return; }
+  ltQueue.push(job); ltPump();
+}
+function ltPump(){ // one recognition at a time, in order, so each word gets the previous words as context
+  if(ltBusy||!ltQueue.length) return;
+  const job=ltQueue.shift();
+  if(!ltTargetOk()){ ltMsg('Tap Live text off and on again, then draw a text box'); ltQueue.length=0; return; }
+  if(job.pg!==ltTarget.page){ ltMsg('Write on the same page as the text box'); return ltPump(); }
+  if(!window.Android||!Android.recognizeLive){ ltMsg('Live text works only in the Android app'); ltQueue.length=0; return; }
   const items=job.items.filter(it=>it.layer.strokes.includes(it.sd));
-  if(!items.length) return;
-  items.sort((a,b)=>a.sd.pts[0].x-b.sd.pts[0].x);
-  let t=0; const strokes=items.map(({sd})=>sd.pts.map(p=>({x:p.x,y:p.y,t:(t+=10)}))); t+=300;
-  const id=++ltId; ltWait.set(id,{pg:job.pg,items,box:ltTarget});
+  if(!items.length) return ltPump();
+  const P=inkPayload(items,ltLines(ltTarget).join('\n'));
+  const id=++ltId; ltBusy=id; ltWait.set(id,{pg:job.pg,items,box:ltTarget,lines:P.lines});
+  setTimeout(()=>{ if(ltBusy===id){ ltBusy=null; ltWait.delete(id); ltMsg('Recognition timed out'); ltPump(); } },20000);
   ltMsg('Recognizing…',true);
-  Android.recognizeLive(id,JSON.stringify(strokes));
+  Android.recognizeLive(id,JSON.stringify(P.payload));
+}
+function ltNewWordCheck(pg,q){ // pen goes down: if it is clearly a new word (gap to the right) or a new line, convert the finished word now
+  if(!ltPend||!ltPend.items.length||ltPend.pg!==pg) return;
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+  for(const {sd} of ltPend.items) for(const p of sd.pts){ if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y; }
+  const H=Math.max(y1-y0,14);
+  if(q.x-x1>0.55*H||q.y>y1+0.25*H){ clearTimeout(ltTimer); ltFlush(); }
 }
 window.__liveResult=function(id,text,ok){
-  const job=ltWait.get(id); ltWait.delete(id); if(!job) return;
+  const job=ltWait.get(id); ltWait.delete(id); if(ltBusy===id) ltBusy=null;
+  try{ ltHandle(job,text,ok); } finally{ ltPump(); }
+};
+function ltHandle(job,text,ok){
+  if(!job) return;
   if(!ok){ ltMsg(text); return; }
   text=(text||'').trim(); if(!text){ ltMsg('Could not read that — try writing a bit clearer'); return; }
   const pg=job.pg, box=job.box, items=job.items.filter(it=>it.layer.strokes.includes(it.sd)); // skip strokes undone / erased meanwhile
@@ -4759,18 +4852,17 @@ window.__liveResult=function(id,text,ok){
   for(const layer of new Set(items.map(i=>i.layer))){
     for(let i=layer.strokes.length-1;i>=0;i--){ const sd=layer.strokes[i]; if(keep.has(sd)){ layer.strokes.splice(i,1); removed.push({layer,sd,index:i}); } }
   }
-  const oldMd=box.md||'', newMd=oldMd?oldMd+' '+text:text;
-  ltSetText(box,newMd);
-  pg.history.push({t:'live',items:removed,box,oldMd,newMd});
+  const oldDoc=box.doc, first=job.lines[0], prev=box._ltLast;
+  const newLine=!!prev&&first.y0+(first.y1-first.y0)*0.5>prev.y1; // written below the previous batch = a new line
+  const lines=ltLines(box), add=text.split('\n');
+  if(lines.length&&!newLine) lines[lines.length-1]=(lines[lines.length-1]+' '+add[0]).trim(); else lines.push(add[0]);
+  for(let k=1;k<add.length;k++) lines.push(add[k]);
+  const newDoc=TE.mdToRawDoc(lines.join('\n'));
+  box._ltLast={y1:job.lines[job.lines.length-1].y1};
+  ltApply(box,newDoc);
+  pg.history.push({t:'live',items:removed,box,oldDoc,newDoc,prevLast:prev});
   for(const r of removed) inkRemove(r.layer,r.sd);
-  asMark(pg,true);
-  ltMsg('Added: '+text);
-};
-function ltSetText(box,md){
-  box.md=md; if(box.ta) box.ta.value=md; renderBoxContent(box);
-  const pg=box.page, fs=box.fontSize||20, w=box.wPct/100*pg.w, cpl=Math.max(4,Math.floor(w/(fs*0.55)));
-  const need=Math.max(60,Math.ceil((md.length||1)/cpl)*fs*1.5+14); // grow the box downwards when the text gets longer
-  if(need>box.hPct/100*pg.h){ box.hPct=need/pg.h*100; applyBoxRect(box); }
+  ltMsg('Added: '+text.replace(/\n/g,' / '));
 }
 /* UNIFIED SELECTION TOOLBAR — one bar for everything: Lasso / Select selections (ink, text, images, mixed) AND a single
    text box / image (Text tool, Image tool, Select tool). The bar adapts to what is selected:
@@ -4783,11 +4875,9 @@ const SB_COPY=SB_SVG('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="
 const SB_REC=SB_SVG('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/><path d="M13 20h7"/>');
 function lsRecognize(){ // send the lasso-selected ink to ML Kit (native) and show the recognised text
   const s=lsSel; if(!s||!s.items.length) return;
-  if(!window.Android||!Android.recognizeInk){ $('st').textContent='Recognition works only in the Android app'; return; }
-  const items=s.items.slice().sort((a,b)=>a.sd.pts[0].y-b.sd.pts[0].y||a.sd.pts[0].x-b.sd.pts[0].x);
-  let t=0; const strokes=items.map(({sd})=>sd.pts.map(p=>({x:p.x,y:p.y,t:(t+=10)}))); t+=300;
+  if(!window.Android||!Android.recognizeInk){ ltMsg('Recognition works only in the Android app'); return; }
   ltMsg('Recognizing…',true);
-  Android.recognizeInk(JSON.stringify(strokes));
+  Android.recognizeInk(JSON.stringify(inkPayload(s.items.slice(),'').payload));
 }
 const SB_CUT=SB_SVG('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/>');
 /* s6t: text box colour. box.textColor = null -> automatic (light text on dark pages, near-black on light pages);
@@ -4812,7 +4902,7 @@ function sbBuild(bar,s){
   else{
     if(box){
       h+=sbBtn('move',TB_ICON.move,'Drag to move the box · use the corner / edge handles to resize','','fMv');
-      if(box.kind==='text') h+=(box.engine==='v2'&&box.mode!=='raw')?sbBtn('raw',TB_ICON.edit,'Edit markdown source')+sbBtn('font',BRUSH_SVG,'Formatting bar','','fFont'+(box.fmt?' on':'')):editing?sbBtn('render',TB_ICON.render,'Render'):sbBtn('edit',TB_ICON.edit,'Edit')+sbBtn('font',BRUSH_SVG,'Text style: colour, font, size','','fFont');
+      if(box.kind==='text') h+=(box.engine==='v2'&&box.mode!=='raw')?sbBtn('raw',TB_ICON.edit,'Edit markdown source')+sbBtn('font',BRUSH_SVG,'Formatting bar','','fFont'+(box.fmt?' on':'')):editing?sbBtn('render',TB_ICON.render,'Render'):sbBtn('edit',TB_ICON.edit,'Edit')+(box.engine==='v2'?sbBtn('render',TB_ICON.render,'Render'):'')+sbBtn('font',BRUSH_SVG,'Text style: colour, font, size','','fFont');
       else h+=sbBtn('ratio',TB_ICON.ratio,'Keep aspect ratio when dragging corners','',box.keepRatio?'on':'')+sbBtn('crop',TB_ICON.crop,'Crop');
       h+='<i class="sep"></i>';
     }
@@ -4862,7 +4952,7 @@ function lsShowBox(dx=0,dy=0){
       if(a==='rec') lsRecognize(); else if(a==='copy') lsCopy(); else if(a==='cut') lsCut(); else if(a==='del') lsDelete();
       else if(a==='rot'){ if(box){ if(box.endCrop) box.endCrop(true); boxRotToggle(box); b.classList.toggle('on',!!box.rotOff); } else lsRotToggle(); }
       else if(a==='raw'){ if(box&&box.engine==='v2') ENGINES.v2.toRaw(box); }
-      else if(a==='edit') via('.fEdit'); else if(a==='render') via('.fRender'); else if(a==='font'){ if(box&&box.engine==='v2') v2Fmt(box,b); else via('.fFont'); }
+      else if(a==='edit') via('.fEdit'); else if(a==='render'){ if(box&&box.engine==='v2'&&box.mode==='raw'&&!box.editor) ltRenderRaw(box); else via('.fRender'); } else if(a==='font'){ if(box&&box.engine==='v2') v2Fmt(box,b); else via('.fFont'); }
       else if(a==='crop') via('.fCrop');
       else if(a==='ratio'){ via('.fRatio'); b.classList.toggle('on',!!(box&&box.keepRatio)); }
       else if(a==='apply'){ if(box&&box.endCrop) box.endCrop(true); } else if(a==='cancel'){ if(box&&box.endCrop) box.endCrop(false); }
